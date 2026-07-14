@@ -1,0 +1,317 @@
+"""Plain geometry data model. No kipy imports here.
+
+Everything is int64 nanometers in KiCad board coordinates (y grows down);
+z grows from the board top surface downwards through the stackup.
+Problem is the complete solver input and doubles as the JSON dump schema,
+so the whole pipeline downstream of board_io runs without KiCad.
+
+Schema v2 is multi-layer: per-layer fills at stackup depths, linked by
+via/through-pad barrels. v1 dumps (single layer, no vias) still load.
+"""
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+JSON_SCHEMA_VERSION = 4
+
+
+@dataclass(frozen=True)
+class Rect:
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+    layer_name: str
+
+    @classmethod
+    def normalized(cls, xa: int, ya: int, xb: int, yb: int, layer_name: str) -> "Rect":
+        return cls(min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb), layer_name)
+
+    @property
+    def width(self) -> int:
+        return self.x1 - self.x0
+
+    @property
+    def height(self) -> int:
+        return self.y1 - self.y0
+
+
+@dataclass
+class Polygon:
+    outline: np.ndarray                       # (N, 2) int64 nm, open ring
+    holes: list[np.ndarray] = field(default_factory=list)
+
+
+@dataclass
+class LayerFill:
+    layer_name: str
+    thickness_nm: int
+    z_nm: int                                 # copper center depth from board top
+    polygons: list[Polygon]
+
+
+@dataclass
+class SurfaceBuildup:
+    """Solder (plus optional added copper) sitting on an outer copper
+    layer inside solder-mask openings (zones on F.Mask/B.Mask)."""
+    layer_name: str                           # copper layer it sits on
+    polygons: list[Polygon]
+
+
+@dataclass
+class Electrode:
+    """One PART of a current-injection terminal: a drawn rectangle or a
+    selected pad. A terminal (V+ or V-) is a LIST of parts, all merged
+    into one equipotential contact (externally bonded). `polygons`
+    (board nm) is the exact copper shape when known (pads); None means
+    the rectangle itself is the shape. `contact` = 'all' or a layer
+    name: which included layers this part touches."""
+    rect: Rect                                # bounding box (labels/summary)
+    contact: str = "all"
+    polygons: list[Polygon] | None = None
+    label: str = "rect"
+
+
+@dataclass
+class ViaLink:
+    """A conductive barrel (via or plated through-hole pad) linking copper
+    layers whose z lies within [z_top_nm, z_bot_nm]."""
+    x: int
+    y: int
+    drill_nm: int
+    z_top_nm: int
+    z_bot_nm: int
+    kind: str = "via"                         # "via" | "pad"
+
+    def spans(self, z_nm: int) -> bool:
+        return self.z_top_nm - 1 <= z_nm <= self.z_bot_nm + 1
+
+    def barrel_resistance(self, length_nm: int, rho_ohm_m: float,
+                          plating_nm: int) -> float:
+        """Barrel segment resistance over length_nm: thin-wall annulus of
+        plating around the drill."""
+        area_m2 = math.pi * (self.drill_nm * 1e-9) * (plating_nm * 1e-9)
+        return rho_ohm_m * (length_nm * 1e-9) / area_m2
+
+
+@dataclass
+class Problem:
+    board_path: str
+    net_name: str
+    rho_ohm_m: float
+    plating_nm: int
+    layers: list[LayerFill]                   # sorted by z_nm (top first)
+    vias: list[ViaLink]
+    electrodes1: list[Electrode]              # V+ terminal parts (merged)
+    electrodes2: list[Electrode]              # V- terminal parts (merged)
+    thickness_source: str = "stackup"
+    buildups: list[SurfaceBuildup] = field(default_factory=list)
+    solder_thickness_nm: int = 50_000
+    solder_rho_ohm_m: float = 1.32e-7
+    extra_cu_nm: int = 0
+
+    @property
+    def layer_names(self) -> list[str]:
+        return [l.layer_name for l in self.layers]
+
+    def sigma_s(self, layer_index: int) -> float:
+        """Sheet conductance of one layer [S per square]."""
+        return (self.layers[layer_index].thickness_nm * 1e-9) / self.rho_ohm_m
+
+    def copper_bbox(self) -> tuple[int, int, int, int]:
+        xs = np.concatenate([p.outline[:, 0]
+                             for l in self.layers for p in l.polygons])
+        ys = np.concatenate([p.outline[:, 1]
+                             for l in self.layers for p in l.polygons])
+        return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+
+def arc_points(start, mid, end, tol_nm: float) -> np.ndarray:
+    """Tessellate a start/mid/end arc into points from start (inclusive)
+    to end (exclusive), max sagitta <= tol_nm. Collinear input degrades
+    to just the start point (straight segment)."""
+    sx, sy = float(start[0]), float(start[1])
+    mx, my = float(mid[0]), float(mid[1])
+    ex, ey = float(end[0]), float(end[1])
+
+    d = 2.0 * (sx * (my - ey) + mx * (ey - sy) + ex * (sy - my))
+    chord = math.hypot(ex - sx, ey - sy)
+    if abs(d) < 1e-9 * max(chord, 1.0):
+        return np.array([[start[0], start[1]]], dtype=np.int64)
+    ux = ((sx**2 + sy**2) * (my - ey) + (mx**2 + my**2) * (ey - sy)
+          + (ex**2 + ey**2) * (sy - my)) / d
+    uy = ((sx**2 + sy**2) * (ex - mx) + (mx**2 + my**2) * (sx - ex)
+          + (ex**2 + ey**2) * (mx - sx)) / d
+    r = math.hypot(sx - ux, sy - uy)
+
+    a0 = math.atan2(sy - uy, sx - ux)
+    a1 = math.atan2(my - uy, mx - ux)
+    a2 = math.atan2(ey - uy, ex - ux)
+    two_pi = 2.0 * math.pi
+    d01 = (a1 - a0) % two_pi
+    d02 = (a2 - a0) % two_pi
+    sweep = d02 if d01 <= d02 else d02 - two_pi
+
+    tol = min(tol_nm, 0.999 * r)
+    dtheta_max = 2.0 * math.acos(1.0 - tol / r)
+    n = max(2, int(math.ceil(abs(sweep) / dtheta_max)))
+    ks = np.arange(n)
+    angs = a0 + sweep * ks / n
+    pts = np.stack([ux + r * np.cos(angs), uy + r * np.sin(angs)], axis=1)
+    return np.round(pts).astype(np.int64)
+
+
+def linearize_ring(nodes: list, tol_nm: float) -> np.ndarray:
+    """nodes: list of ('pt', (x, y)) or ('arc', (start, mid, end)) tuples,
+    already in board nm. Returns an (N, 2) int64 open ring."""
+    parts = []
+    for kind, data in nodes:
+        if kind == "pt":
+            parts.append(np.array([[data[0], data[1]]], dtype=np.int64))
+        elif kind == "arc":
+            parts.append(arc_points(data[0], data[1], data[2], tol_nm))
+        else:
+            raise ValueError(f"unknown polyline node kind: {kind}")
+    ring = np.concatenate(parts, axis=0)
+    if len(ring) > 1 and (ring[0] == ring[-1]).all():
+        ring = ring[:-1]
+    return ring
+
+
+# --- JSON dump / load -------------------------------------------------------
+
+def _poly_to_json(p: Polygon) -> dict:
+    return {"outline": p.outline.tolist(), "holes": [h.tolist() for h in p.holes]}
+
+
+def _poly_from_json(d: dict) -> Polygon:
+    return Polygon(outline=np.asarray(d["outline"], dtype=np.int64),
+                   holes=[np.asarray(h, dtype=np.int64) for h in d["holes"]])
+
+
+def _electrode_to_json(e: Electrode) -> dict:
+    return {
+        "rect": vars(e.rect) | {},
+        "contact": e.contact,
+        "label": e.label,
+        "polygons": (None if e.polygons is None
+                     else [_poly_to_json(poly) for poly in e.polygons]),
+    }
+
+
+def _electrode_from_json(d: dict) -> Electrode:
+    return Electrode(
+        rect=_rect_from_json(d["rect"]),
+        contact=d.get("contact", "all"),
+        label=d.get("label", "rect"),
+        polygons=(None if d.get("polygons") is None
+                  else [_poly_from_json(pd) for pd in d["polygons"]]),
+    )
+
+
+def problem_to_json(p: Problem) -> dict:
+    return {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "board_path": p.board_path,
+        "net_name": p.net_name,
+        "rho_ohm_m": p.rho_ohm_m,
+        "plating_nm": p.plating_nm,
+        "thickness_source": p.thickness_source,
+        "electrodes1": [_electrode_to_json(e) for e in p.electrodes1],
+        "electrodes2": [_electrode_to_json(e) for e in p.electrodes2],
+        "layers": [
+            {
+                "layer_name": l.layer_name,
+                "thickness_nm": l.thickness_nm,
+                "z_nm": l.z_nm,
+                "polygons": [_poly_to_json(poly) for poly in l.polygons],
+            }
+            for l in p.layers
+        ],
+        "vias": [vars(v) | {} for v in p.vias],
+        "buildups": [
+            {"layer_name": b.layer_name,
+             "polygons": [_poly_to_json(poly) for poly in b.polygons]}
+            for b in p.buildups
+        ],
+        "solder_thickness_nm": p.solder_thickness_nm,
+        "solder_rho_ohm_m": p.solder_rho_ohm_m,
+        "extra_cu_nm": p.extra_cu_nm,
+    }
+
+
+def _rect_from_json(rd: dict) -> Rect:
+    return Rect(int(rd["x0"]), int(rd["y0"]), int(rd["x1"]), int(rd["y1"]),
+                rd["layer_name"])
+
+
+def problem_from_json(d: dict) -> Problem:
+    version = d.get("schema_version", 1)
+    if version == 1:
+        # v1: single layer, no vias, rect electrodes
+        return Problem(
+            board_path=d["board_path"],
+            net_name=d["net_name"],
+            rho_ohm_m=float(d["rho_ohm_m"]),
+            plating_nm=18_000,
+            layers=[LayerFill(
+                layer_name=d["layer_name"],
+                thickness_nm=int(d["thickness_nm"]),
+                z_nm=0,
+                polygons=[_poly_from_json(pd) for pd in d["polygons"]],
+            )],
+            vias=[],
+            electrodes1=[Electrode(rect=_rect_from_json(d["rect1"]))],
+            electrodes2=[Electrode(rect=_rect_from_json(d["rect2"]))],
+            thickness_source=d.get("thickness_source", "unknown"),
+        )
+    return Problem(
+        board_path=d["board_path"],
+        net_name=d["net_name"],
+        rho_ohm_m=float(d["rho_ohm_m"]),
+        plating_nm=int(d["plating_nm"]),
+        layers=[
+            LayerFill(
+                layer_name=ld["layer_name"],
+                thickness_nm=int(ld["thickness_nm"]),
+                z_nm=int(ld["z_nm"]),
+                polygons=[_poly_from_json(pd) for pd in ld["polygons"]],
+            )
+            for ld in d["layers"]
+        ],
+        vias=[
+            ViaLink(x=int(vd["x"]), y=int(vd["y"]), drill_nm=int(vd["drill_nm"]),
+                    z_top_nm=int(vd["z_top_nm"]), z_bot_nm=int(vd["z_bot_nm"]),
+                    kind=vd.get("kind", "via"))
+            for vd in d["vias"]
+        ],
+        electrodes1=(
+            [_electrode_from_json(ed) for ed in d["electrodes1"]]
+            if version >= 3 else [_electrode_from_json(d["electrode1"])]),
+        electrodes2=(
+            [_electrode_from_json(ed) for ed in d["electrodes2"]]
+            if version >= 3 else [_electrode_from_json(d["electrode2"])]),
+        thickness_source=d.get("thickness_source", "unknown"),
+        buildups=[
+            SurfaceBuildup(
+                layer_name=bd["layer_name"],
+                polygons=[_poly_from_json(pd) for pd in bd["polygons"]])
+            for bd in d.get("buildups", [])
+        ],
+        solder_thickness_nm=int(d.get("solder_thickness_nm", 50_000)),
+        solder_rho_ohm_m=float(d.get("solder_rho_ohm_m", 1.32e-7)),
+        extra_cu_nm=int(d.get("extra_cu_nm", 0)),
+    )
+
+
+def save_problem(p: Problem, path: Path) -> None:
+    path.write_text(json.dumps(problem_to_json(p)), encoding="utf-8")
+
+
+def load_problem(path: Path) -> Problem:
+    return problem_from_json(json.loads(Path(path).read_text(encoding="utf-8")))

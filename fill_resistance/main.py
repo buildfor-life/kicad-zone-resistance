@@ -1,0 +1,108 @@
+"""Top-level orchestration for the KiCad-launched action.
+
+Flow: connect -> read the two selected contacts (rectangles/pads) ->
+gather fills -> selection dialog (net, layers, contacts, current, cell)
+-> extract vias -> solve -> figures + report.
+
+Every failure is reported twice: on stdout (lands in the KiCad status-bar
+warning list) and as a matplotlib error figure, so it cannot be missed.
+"""
+from __future__ import annotations
+
+import sys
+import traceback
+
+from . import config, pipeline, report
+from .errors import CandidateError, UserFacingError
+
+
+def _fail(message: str, outdir) -> None:
+    print(f"ERROR: {message}")
+    from . import plots
+    fig = plots.fig_error(message)
+    plots.save_and_show([(fig, "error")], outdir)
+    sys.exit(1)
+
+
+def main() -> None:
+    outdir = None
+    try:
+        from kipy.errors import ApiError
+
+        from . import board_io, dialog
+        try:
+            kicad, board = board_io.connect()
+            stackup = board_io.get_stackup_info(board)
+            es1, es2, net_hint = board_io.get_electrodes(board)
+            if board_io.any_zone_unfilled(board) or config.ALWAYS_REFILL:
+                board_io.refill(board)
+            fills = board_io.gather_net_fills(board)
+            candidate_nets = board_io.nets_overlapping(fills, es1, es2)
+            buildups = board_io.gather_mask_buildups(board)
+        except ApiError as e:
+            raise UserFacingError(
+                f"KiCad API error: {e}\nIf KiCad is showing a dialog, close "
+                f"it and run again."
+            )
+
+        if not candidate_nets:
+            raise CandidateError(
+                "No copper zone fill overlaps both contacts. Check that both "
+                "sit over (or in) filled pours and that the fills are up to "
+                "date (press B in the board editor)."
+            )
+
+        def group_label(parts):
+            names = [p.label for p in parts[:3]]
+            more = f" +{len(parts) - 3}" if len(parts) > 3 else ""
+            return f"{len(parts)}× " + ", ".join(names) + more
+
+        def group_contact(parts):
+            contacts = {p.contact for p in parts}
+            return contacts.pop() if len(contacts) == 1 else "auto"
+
+        default_net = (net_hint if net_hint in candidate_nets
+                       else candidate_nets[0])
+        selection = dialog.ask(
+            candidates={n: list(fills[n].keys()) for n in candidate_nets},
+            layer_order=stackup.names,
+            default_net=default_net,
+            e1_label=group_label(es1), e2_label=group_label(es2),
+            contact1=group_contact(es1), contact2=group_contact(es2),
+            buildup_layers=sorted(buildups.keys()),
+        )
+        if selection is None:
+            print("cancelled")
+            return
+
+        if selection.contact1 != "auto":
+            for e in es1:
+                e.contact = selection.contact1
+        if selection.contact2 != "auto":
+            for e in es2:
+                e.contact = selection.contact2
+        if selection.cell_um is not None:
+            config.CELL_UM_OVERRIDE = selection.cell_um
+
+        try:
+            problem = board_io.build_problem(
+                board, selection.net, selection.layers, es1, es2, stackup,
+                fills,
+                buildups=(buildups if selection.include_buildup else None),
+                extra_cu_um=selection.extra_cu_um)
+            outdir = report.make_output_dir(board_io.board_dir(board))
+        except ApiError as e:
+            raise UserFacingError(f"KiCad API error: {e}")
+
+        report.write_geometry_dump(outdir, problem)
+        pipeline.run(problem, outdir, show=True, i_test=selection.current_a,
+                     freq_hz=selection.freq_hz,
+                     contact_model=selection.contact_model)
+    except UserFacingError as e:
+        _fail(str(e), outdir)
+    except Exception:
+        _fail(traceback.format_exc(), outdir)
+
+
+if __name__ == "__main__":
+    main()

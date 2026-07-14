@@ -1,0 +1,21 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "th.co.b4l.fill-resistance",
+    "name": "Fill Resistance",
+    "description": "DC resistance of a copper zone fill between two rectangle electrodes",
+    "runtime": {
+        "type": "python"
+    },
+    "actions": [
+        {
+            "identifier": "fill-resistance-run",
+            "name": "Fill Resistance",
+            "description": "Select two rectangles marking the contact areas, then run to compute the fill resistance between them",
+            "entrypoint": "fill_res_action.py",
+            "show-button": true,
+            "scopes": ["pcb"],
+            "icons-light": ["icons/fill_res_24_light.png"],
+            "icons-dark": ["icons/fill_res_24_dark.png"]
+        }
+    ]
+}
