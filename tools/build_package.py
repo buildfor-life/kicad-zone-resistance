@@ -29,7 +29,7 @@ PLUGIN_FILES = [
     "plugin.json",
     "fill_res_action.py",
     "requirements.txt",
-    "LICENSE.txt",
+    "LICENSE",
 ]
 PLUGIN_GLOBS = [
     ("fill_resistance", "*.py"),

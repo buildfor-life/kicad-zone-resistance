@@ -183,7 +183,7 @@ regenerated with `python tools/gen_icons.py`.
 
 ## License
 
-GPL-3.0-or-later — see [LICENSE.txt](LICENSE.txt).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 ## Troubleshooting
 
