@@ -292,7 +292,9 @@ def gather_net_fills(board: Board) -> dict[str, dict[str, list[Polygon]]]:
     """net -> layer_name -> merged fill polygons (non-empty only)."""
     fills: dict[str, dict[str, list[Polygon]]] = {}
     for zone in board.get_zones():
-        if zone.type != ZoneType.ZT_COPPER:
+        # teardrop fills are conducting copper too, but KiCad types them
+        # ZT_TEARDROP instead of ZT_COPPER
+        if zone.type not in (ZoneType.ZT_COPPER, ZoneType.ZT_TEARDROP):
             continue
         net = zone.net.name if zone.net is not None else "<no net>"
         for layer, polys in zone.filled_polygons.items():
@@ -392,8 +394,8 @@ def gather_mask_buildups(board: Board) -> dict[str, list[Polygon]]:
 
 
 def any_zone_unfilled(board: Board) -> bool:
-    return any(z.type == ZoneType.ZT_COPPER and not z.filled
-               for z in board.get_zones())
+    return any(z.type in (ZoneType.ZT_COPPER, ZoneType.ZT_TEARDROP)
+               and not z.filled for z in board.get_zones())
 
 
 def refill(board: Board) -> None:

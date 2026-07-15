@@ -56,13 +56,13 @@ def test_uniform_limit_graph_identical():
     ny, nx = stack.shape2d
     flat_of_leaf = grid.y0.astype(np.int64) * nx + grid.x0
     ia, ib, g = quadtree.leaf_edges(grid, p.sigma_s(0))
-    ours = np.sort(np.stack([
+    ours = np.stack([
         np.minimum(flat_of_leaf[ia], flat_of_leaf[ib]),
-        np.maximum(flat_of_leaf[ia], flat_of_leaf[ib])], axis=1), axis=0)
+        np.maximum(flat_of_leaf[ia], flat_of_leaf[ib])], axis=1)
 
     edges = solver.build_edges(stack, p, [p.sigma_s(0)])
-    ref = np.sort(np.stack([np.minimum(edges.a, edges.b),
-                            np.maximum(edges.a, edges.b)], axis=1), axis=0)
+    ref = np.stack([np.minimum(edges.a, edges.b),
+                    np.maximum(edges.a, edges.b)], axis=1)
     assert ours.shape == ref.shape
     assert np.array_equal(np.sort(ours.view("i8,i8"), order=["f0", "f1"],
                                   axis=0),

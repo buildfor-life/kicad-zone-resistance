@@ -40,8 +40,9 @@ class RasterStack:
                                         # (mask opening ∩ copper)
     chain: np.ndarray | None = None     # bool (L, ny, nx): cells that are
                                         # copper only through a 1D trace chain
-    chain_edges: tuple | None = None    # (a, b, g_dc, layer) arrays: explicit
-                                        # DC conductances of the chain links
+    chain_edges: tuple | None = None    # (a, b, g_dc, layer, dl_m) arrays:
+                                        # explicit DC conductances and link
+                                        # lengths of the chain links
     thick_scale: np.ndarray | None = None   # float (L, ny, nx): per-cell
                                             # copper-thickness factor (via
                                             # mouths: cap-thin or partially
@@ -320,7 +321,7 @@ def _build_chains(stack: RasterStack, problem: Problem,
     h = stack.h_nm
     regular = stack.masks.copy()
     chain = np.zeros_like(stack.masks)
-    aa, bb, gg, ll = [], [], [], []
+    aa, bb, gg, ll, dd = [], [], [], [], []
     for li, seg in narrow:
         pts = seg.centerline(0.2 * h)
         d = np.hypot(*np.diff(pts, axis=0).T)
@@ -352,12 +353,14 @@ def _build_chains(stack: RasterStack, problem: Problem,
             bb.append(li * plane + int(ci[k + 1]) * nx + int(cj[k + 1]))
             gg.append(g0 / dl)
             ll.append(li)
+            dd.append(dl)
     stack.chain = chain & ~regular
     stack.masks |= stack.chain
     stack.chain_edges = (np.asarray(aa, dtype=np.int64),
                          np.asarray(bb, dtype=np.int64),
                          np.asarray(gg, dtype=float),
-                         np.asarray(ll, dtype=np.int64))
+                         np.asarray(ll, dtype=np.int64),
+                         np.asarray(dd, dtype=float))
     return len(aa)
 
 

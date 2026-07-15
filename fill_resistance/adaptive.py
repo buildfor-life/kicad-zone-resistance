@@ -130,14 +130,13 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
         cxg[offs[li]:offs[li + 1]] = cxl
         cyg[offs[li]:offs[li + 1]] = cyl
         sig_leaf = np.full(g_.n, sigmas[li])
-        t_m = problem.layers[li].thickness_nm * 1e-9
         s2d = sv._sigma_2d(stack, li, sigmas[li], sigma_buildup)
         fine = g_.size == 1
         if s2d is not None and fine.any():
             sig_leaf[fine] = s2d[g_.y0[fine], g_.x0[fine]]
-        # J reference thickness: same convention as the uniform grid
-        teq_leaves.append(sig_leaf * problem.rho_ohm_m if s2d is not None
-                          else np.full(g_.n, t_m))
+        # J reference thickness: conduction-equivalent copper (= geometric
+        # t at DC, skin-reduced at AC), same convention as the uniform grid
+        teq_leaves.append(sig_leaf * problem.rho_ohm_m)
         sig_leaves.append(sig_leaf)
         chainleaf = np.zeros(g_.n, dtype=bool)
         if stack.chain is not None and fine.any():
@@ -156,7 +155,7 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
         ee.append(np.full(len(ia), li, dtype=np.int16))
 
     if stack.chain_edges is not None and len(stack.chain_edges[0]):
-        ca, cb, cg, cl = stack.chain_edges
+        ca, cb, cg, cl, _ = stack.chain_edges
         alive = stack.masks.ravel()[ca] & stack.masks.ravel()[cb]
         if alive.any():
             na = np.empty(len(ca), dtype=np.int64)
@@ -241,6 +240,8 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
                          dead_barrels=dead_barrels)
         e_delta, e_axis, e_layer = e_delta[sel], e_axis[sel], e_layer[sel]
         for li in range(L):
+            if grids[li].n == 0:
+                continue
             ids = grids[li].id_grid
             kept_cells = (ids >= 0) & keepn[offs[li] + np.maximum(ids, 0)]
             stack.masks[li] &= kept_cells
@@ -389,6 +390,8 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
     # (fine regions stay plain copper = fully resolved)
     stack.mesh = np.zeros_like(stack.masks)
     for li in range(L):
+        if grids[li].n == 0:
+            continue
         ids = grids[li].id_grid
         b = np.zeros_like(stack.masks[li])
         b[:, 1:] |= ids[:, 1:] != ids[:, :-1]
@@ -437,6 +440,9 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
         cellP = Pnode[offs[li]:offs[li + 1]] \
             / (g_.size.astype(float) ** 2 * h_m * h_m)
         Parea[li][m] = np.maximum(cellP, 0.0)[ids[m]]
+    # chain cells accumulate no leaf-face currents (their links carry
+    # axis -1): overlay the true 1D link density
+    sv.overlay_chain_density(stack, problem.rho_ohm_m, V3, J3)
     timings["postprocess_s"] = time.perf_counter() - t0
 
     return sv.Result(

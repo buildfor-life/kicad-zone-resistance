@@ -233,7 +233,7 @@ def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
         vv.append(np.array([vi], dtype=np.int32))
 
     if stack.chain_edges is not None and len(stack.chain_edges[0]):
-        ca, cb, cg, cl = stack.chain_edges
+        ca, cb, cg, cl, _ = stack.chain_edges
         alive = stack.masks.ravel()[ca] & stack.masks.ravel()[cb]
         if alive.any():
             # skin correction: scale like the layer's sheet conductance
@@ -440,16 +440,16 @@ def _face_current_density(V2: np.ndarray, mask2: np.ndarray, sigma: float,
                           sig2d: np.ndarray | None = None,
                           rho: float | None = None) -> np.ndarray:
     """|J| (A/m^2) for one layer from face currents; V2 in volts.
-    With a per-cell conductance map (buildup), face currents use the
-    harmonic mean and J is referenced to the conductance-equivalent
-    copper thickness t_eq = sigma_cell * rho (equals the geometric t for
-    plain DC copper)."""
+    J is referenced to the conductance-equivalent copper thickness
+    t_eq = sigma_cell * rho: the geometric t for plain DC copper, the
+    skin-reduced conducting cross-section at AC. With a per-cell
+    conductance map (buildup), face currents use the harmonic mean."""
     ny, nx = mask2.shape
     face_x = mask2[:, :-1] & mask2[:, 1:]
     face_y = mask2[:-1, :] & mask2[1:, :]
     if sig2d is None:
         wx = wy = sigma
-        teq = np.full((ny, nx), t_m)
+        teq = np.full((ny, nx), sigma * rho if rho is not None else t_m)
     else:
         wx = 2.0 * sig2d[:, :-1] * sig2d[:, 1:] / (sig2d[:, :-1] + sig2d[:, 1:])
         wy = 2.0 * sig2d[:-1, :] * sig2d[1:, :] / (sig2d[:-1, :] + sig2d[1:, :])
@@ -466,6 +466,31 @@ def _face_current_density(V2: np.ndarray, mask2: np.ndarray, sigma: float,
     Jmag = np.hypot(Jx, Jy) / (h_m * teq)
     Jmag[~mask2] = np.nan
     return Jmag
+
+
+def overlay_chain_density(stack: RasterStack, rho: float, V3: np.ndarray,
+                          J3: np.ndarray) -> None:
+    """Fill chain (sub-resolution trace) cells of J3 with the true 1D
+    link current density |dV| / (rho * dl), referenced to the
+    conduction-equivalent trace cross-section: the AC scaling of the
+    link conductance and of the cross-section cancel, so the expression
+    holds at any frequency. V3/J3 are the display-scaled (L, ny, nx)
+    maps; chain cells carry the max density of their attached links."""
+    if stack.chain is None or stack.chain_edges is None \
+            or not len(stack.chain_edges[0]):
+        return
+    ca, cb, _, _, cdl = stack.chain_edges
+    mflat = stack.masks.reshape(-1)
+    alive = mflat[ca] & mflat[cb]
+    if not alive.any():
+        return
+    V3f = np.nan_to_num(V3.reshape(-1))
+    Jl = np.abs(V3f[ca] - V3f[cb]) / (rho * cdl)
+    Jc = np.zeros(mflat.size)
+    np.maximum.at(Jc, ca[alive], Jl[alive])
+    np.maximum.at(Jc, cb[alive], Jl[alive])
+    fill = stack.chain & stack.masks
+    J3[fill] = Jc.reshape(J3.shape)[fill]
 
 
 def _equipotential_core(state: np.ndarray, edges: Edges):
@@ -719,17 +744,22 @@ def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
         parts2 or [], Ie, edges, e2.ravel(), s, i_test,
         contact_model, int(e2.sum()))
 
-    # embedded potential + per-layer current density @ I_test
+    # embedded potential + per-layer current density @ I_test; chain
+    # cells have no sheet faces in the model, so keep them out of the
+    # face computation and overlay their true 1D link density instead
     V3 = np.full((L, ny, nx), np.nan)
     V3[stack.masks] = Vflat.reshape(L, ny, nx)[stack.masks] * s
+    sheet = stack.masks if stack.chain is None \
+        else stack.masks & ~stack.chain
     J3 = np.stack([
         _face_current_density(
-            np.nan_to_num(V3[li]), stack.masks[li], sigmas[li],
+            np.nan_to_num(V3[li]), sheet[li], sigmas[li],
             h_m, problem.layers[li].thickness_nm * 1e-9,
             sig2d=_sigma_2d(stack, li, sigmas[li], sigma_buildup),
             rho=problem.rho_ohm_m)
         for li in range(L)
     ])
+    overlay_chain_density(stack, problem.rho_ohm_m, V3, J3)
     timings["postprocess_s"] = time.perf_counter() - t0
 
     return Result(

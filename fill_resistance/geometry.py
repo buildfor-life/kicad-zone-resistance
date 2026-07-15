@@ -159,10 +159,15 @@ class Problem:
     def copper_bbox(self) -> tuple[int, int, int, int]:
         xs = [p.outline[:, 0] for l in self.layers for p in l.polygons]
         ys = [p.outline[:, 1] for l in self.layers for p in l.polygons]
+        tol = 1_000.0
         for seg in self.tracks:
-            ring = seg.outline(100_000.0)      # coarse tol: bbox only
-            xs.append(ring[:, 0])
-            ys.append(ring[:, 1])
+            # exact stroke bbox: centerline extrema + half width (round
+            # caps); a chord-tessellated outline undershoots arc and cap
+            # extrema by up to its sagitta tolerance
+            pts = seg.centerline(tol)
+            r = seg.width_nm / 2.0 + tol
+            xs.append(np.array([pts[:, 0].min() - r, pts[:, 0].max() + r]))
+            ys.append(np.array([pts[:, 1].min() - r, pts[:, 1].max() + r]))
         x = np.concatenate(xs)
         y = np.concatenate(ys)
         return int(x.min()), int(y.min()), int(x.max()), int(y.max())
