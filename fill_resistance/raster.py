@@ -46,6 +46,8 @@ class RasterStack:
                                             # copper-thickness factor (via
                                             # mouths: cap-thin or partially
                                             # drilled cells); None = all 1
+    mesh: np.ndarray | None = None      # bool (L, ny, nx): adaptive leaf
+                                        # boundaries (drawn on the raster map)
 
     @property
     def nlayers(self) -> int:

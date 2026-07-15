@@ -385,6 +385,25 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
     part_currents1 = part_currents(parts1, e1n, int(e1.sum()))
     part_currents2 = part_currents(parts2, e2n, int(e2.sum()))
 
+    # leaf boundaries for the raster map: draw the coarse mesh structure
+    # (fine regions stay plain copper = fully resolved)
+    stack.mesh = np.zeros_like(stack.masks)
+    for li in range(L):
+        ids = grids[li].id_grid
+        b = np.zeros_like(stack.masks[li])
+        b[:, 1:] |= ids[:, 1:] != ids[:, :-1]
+        b[1:, :] |= ids[1:, :] != ids[:-1, :]
+        coarse = grids[li].size[np.maximum(ids, 0)] >= 2
+        stack.mesh[li] = b & coarse & stack.masks[li]
+
+    # piecewise-LINEAR potential expansion from the leaf gradients of the
+    # final solution: constant-per-leaf expansion shows leaf-sized
+    # staircase corners in the equipotential contours on coarse interiors
+    if faces.any():
+        dgx, dgy = _leaf_gradients(N, fa, fb, cxg, cyg, Vflat)
+    else:
+        dgx = dgy = np.zeros(N)
+
     V3 = np.full((L, ny, nx), np.nan)
     J3 = np.full((L, ny, nx), np.nan)
     Parea = np.full((L, ny, nx), np.nan)
@@ -393,7 +412,11 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
         ids = g_.id_grid
         m = stack.masks[li]
         Vl = Vflat[offs[li]:offs[li + 1]]
-        V3[li][m] = Vl[ids[m]] * s
+        ii, jj = np.nonzero(m)
+        gid = offs[li] + ids[ii, jj]
+        V3[li][ii, jj] = (Vflat[gid]
+                          + dgx[gid] * (jj + 0.5 - cxg[gid])
+                          + dgy[gid] * (ii + 0.5 - cyg[gid])) * s
 
         sel = (e_axis >= 0) & (e_layer == li)
         la = (edges.a[sel] - offs[li]).astype(np.int64)

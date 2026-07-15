@@ -49,6 +49,7 @@ _E1_COLOR = "#c8385a"
 _E2_COLOR = "#2f6fb0"
 _VIA_COLOR = "#2d6b45"
 _SOLDER = "#9aa3ad"      # tin-gray: solder buildup areas
+_MESH = "#a56c33"        # darker copper: adaptive leaf boundaries
 _INK = "#3a3a3a"
 _GRID_INK = "#b8b4ae"
 
@@ -154,16 +155,20 @@ def _injection_area_labels(ax, li, layer_name, problem, result):
 
 def fig_raster(stack, e1, e2, problem, result=None):
     fig, axes = _layer_fig(stack, "Fill Resistance - rasterized map")
-    cmap = ListedColormap([_BG, _COPPER, _E1_COLOR, _E2_COLOR, _SOLDER])
+    cmap = ListedColormap([_BG, _COPPER, _E1_COLOR, _E2_COLOR, _SOLDER,
+                           _MESH])
     has_buildup = stack.buildup is not None and stack.buildup.any()
+    has_mesh = stack.mesh is not None and stack.mesh.any()
     for li, ax in enumerate(axes):
         codes = np.zeros(stack.shape2d, dtype=np.uint8)
         codes[stack.masks[li]] = 1
         if has_buildup:
             codes[stack.buildup[li]] = 4
+        if has_mesh:
+            codes[stack.mesh[li]] = 5
         codes[e1[li]] = 2
         codes[e2[li]] = 3
-        ax.imshow(codes, cmap=cmap, vmin=0, vmax=4, origin="upper",
+        ax.imshow(codes, cmap=cmap, vmin=0, vmax=5, origin="upper",
                   extent=stack.extent_mm(), interpolation="nearest")
         _via_markers(ax, problem, problem.layers[li])
         if result is not None and (result.part_currents1
@@ -174,6 +179,8 @@ def fig_raster(stack, e1, e2, problem, result=None):
             _electrode_labels(ax, stack, e1[li], e2[li])
     handles = [Patch(fc=_COPPER, label="copper"),
                Patch(fc=_VIA_COLOR, label="vias")]
+    if has_mesh:
+        handles.append(Patch(fc=_MESH, label="adaptive mesh (coarse leaves)"))
     if has_buildup:
         handles.append(Patch(
             fc=_SOLDER,

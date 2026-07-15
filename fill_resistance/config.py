@@ -66,11 +66,12 @@ TARGET_CELLS_ADAPTIVE = 8_000_000  # auto cell-size budget with the adaptive
                                 # grid: unknowns no longer scale with the
                                 # fine cell count, so the auto sizer picks
                                 # a ~2x finer h (memory-bound: masks/fields)
-ADAPTIVE_MAX_CELL_UM = 2000.0   # coarsest leaf edge length. The MINIMUM
-                                # element size is the grid cell size itself
-                                # (auto / dialog / CELL_UM_OVERRIDE). Rarely
-                                # needs tuning: the guard distance already
-                                # caps leaf growth near features
+ADAPTIVE_MAX_CELL_UM = 1000.0   # coarsest leaf edge length (also the
+                                # granularity of the potential/field maps
+                                # on plane interiors). The MINIMUM element
+                                # size is the grid cell size itself (auto /
+                                # dialog / CELL_UM_OVERRIDE). The guard
+                                # distance caps leaf growth near features
 ADAPTIVE_GUARD = 4              # a leaf of size s needs >= GUARD*s cells of
                                 # clearance to the nearest feature
 ADAPTIVE_CORRECTION_PASSES = 1  # deferred-correction re-solves fixing the

@@ -124,7 +124,8 @@ def test_1d_trace_bridge(monkeypatch):
 
     ref = _run(prob(), 0.5, adaptive=False, monkeypatch=monkeypatch)
     ada = _run(prob(), 0.5, adaptive=True, monkeypatch=monkeypatch)
-    assert ada.n_free < 0.6 * ref.n_free
+    # max leaf = 1 mm = 2 cells at h = 0.5, so the coarsening is modest
+    assert ada.n_free < 0.7 * ref.n_free
     assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=2e-3)
 
 
@@ -183,8 +184,23 @@ def test_auto_cell_size_finer_with_adaptive(monkeypatch):
 
 def test_max_cell_size_respected(monkeypatch):
     from fill_resistance.adaptive import _max_block
-    assert _max_block(100_000.0) == 16      # 2000 um / 100 um cells
+    assert _max_block(100_000.0) == 8       # 1000 um / 100 um cells
     monkeypatch.setattr(config, "ADAPTIVE_MAX_CELL_UM", 250.0)
     assert _max_block(100_000.0) == 2
     monkeypatch.setattr(config, "ADAPTIVE_MAX_CELL_UM", 50.0)
     assert _max_block(100_000.0) == 1       # never below the fine cell
+
+
+def test_potential_expansion_is_smooth(monkeypatch):
+    """The potential map is expanded piecewise-linearly from the leaf
+    gradients: on a strip it must track the uniform-grid potential to a
+    small fraction of the total span (constant-per-leaf expansion would
+    show leaf-sized steps of ~1-2% of the span)."""
+    p = strip_problem(length=50, width=10, e_len=5)
+    ref = _run(p, 0.25, adaptive=False, monkeypatch=monkeypatch)
+    p2 = strip_problem(length=50, width=10, e_len=5)
+    ada = _run(p2, 0.25, adaptive=True, monkeypatch=monkeypatch)
+    span = np.nanmax(ref.V)
+    both = np.isfinite(ref.V) & np.isfinite(ada.V)
+    dev = np.abs(ada.V[both] - ref.V[both]).max()
+    assert dev < 0.005 * span
