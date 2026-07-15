@@ -137,6 +137,17 @@ SWIG API. Requires KiCad **10.0.1+**.
   AMG-preconditioned CG (pyamg) above — Jacobi-CG if pyamg is missing.
   Discretization error typically ≲ 2 % at defaults — halve the cell size
   and compare to judge convergence.
+- **Adaptive cells** (dialog checkbox, off by default; `ADAPTIVE_CELLS`):
+  solves on a 2:1-balanced quadtree — fine cells at copper boundaries,
+  electrodes, traces, via mouths and buildup, blocks up to
+  `ADAPTIVE_MAX_CELL_UM` (2 mm) in plane interiors (`ADAPTIVE_GUARD`
+  sets the clearance a block needs to grow). The **minimum element size
+  is the grid cell size itself** (auto / dialog / `CELL_UM_OVERRIDE`);
+  the uniform limit reproduces the normal grid exactly. Large
+  speed/memory wins on big pours; the coarse–fine interfaces carry a
+  first-order flux error that biases R **low by ~0.5–2 %** depending on
+  geometry (worst on narrow strips, mild on large planes). All fields
+  are expanded back to the fine grid for the maps and reports.
 
 ## Offline / development
 

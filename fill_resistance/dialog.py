@@ -37,6 +37,7 @@ class Selection:
     extra_cu_um: float = 0.0
     include_tracks: bool = True
     vias_capped: bool = True
+    adaptive: bool = False
 
 
 class _Dialog(QDialog):
@@ -71,6 +72,12 @@ class _Dialog(QDialog):
             f"off = open mouths)")
         self.capped_check.setChecked(config.VIAS_CAPPED)
         form.addRow("Vias:", self.capped_check)
+
+        self.adaptive_check = QCheckBox(
+            "adaptive cells (coarsen plane interiors; faster on large "
+            "boards, ~0.5–2 % low bias)")
+        self.adaptive_check.setChecked(config.ADAPTIVE_CELLS)
+        form.addRow("Grid:", self.adaptive_check)
 
         self.contact1_box = QComboBox()
         self.contact2_box = QComboBox()
@@ -214,7 +221,8 @@ class _Dialog(QDialog):
                          include_buildup=self.buildup_check.isChecked(),
                          extra_cu_um=extra_cu,
                          include_tracks=self.tracks_check.isChecked(),
-                         vias_capped=self.capped_check.isChecked())
+                         vias_capped=self.capped_check.isChecked(),
+                         adaptive=self.adaptive_check.isChecked())
 
     def _try_accept(self) -> None:
         try:

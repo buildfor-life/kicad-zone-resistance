@@ -123,7 +123,7 @@ def _emit(S: np.ndarray, mask: np.ndarray, max_block: int) -> LeafGrid:
 def _split_unbalanced(grid: LeafGrid, S: np.ndarray) -> bool:
     """Cap S over any leaf more than 2x an edge-adjacent neighbor, so the
     next emission splits it. Returns True if anything was capped."""
-    ia, ib, _ = leaf_faces(grid)
+    ia, ib, _, _ = leaf_faces(grid)
     sa, sb = grid.size[ia], grid.size[ib]
     big = np.unique(np.concatenate([ia[sa > 2 * sb], ib[sb > 2 * sa]]))
     for lid in big:
@@ -132,32 +132,36 @@ def _split_unbalanced(grid: LeafGrid, S: np.ndarray) -> bool:
     return len(big) > 0
 
 
-def leaf_faces(grid: LeafGrid) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(ia, ib, w) for every edge-adjacent leaf pair, each pair once;
-    w = shared face length in fine-cell units."""
+def leaf_faces(grid: LeafGrid) -> tuple[np.ndarray, np.ndarray, np.ndarray,
+                                        np.ndarray]:
+    """(ia, ib, w, axis) for every edge-adjacent leaf pair, each pair
+    once; w = shared face length in fine-cell units. axis 0 = x-faces
+    (a left of b), axis 1 = y-faces (a above b)."""
     n = grid.n
     if n == 0:
         z = np.zeros(0, dtype=np.int64)
-        return z, z, z
+        return z, z, z, z
     out = []
-    for sl_a, sl_b in ((np.s_[:, :-1], np.s_[:, 1:]),
-                       (np.s_[:-1, :], np.s_[1:, :])):
+    for axis, (sl_a, sl_b) in enumerate(((np.s_[:, :-1], np.s_[:, 1:]),
+                                         (np.s_[:-1, :], np.s_[1:, :]))):
         a = grid.id_grid[sl_a].ravel().astype(np.int64)
         b = grid.id_grid[sl_b].ravel().astype(np.int64)
         ok = (a >= 0) & (b >= 0) & (a != b)
         key, counts = np.unique(a[ok] * n + b[ok], return_counts=True)
-        out.append((key // n, key % n, counts))
+        out.append((key // n, key % n, counts,
+                    np.full(len(key), axis, dtype=np.int8)))
     ia = np.concatenate([o[0] for o in out])
     ib = np.concatenate([o[1] for o in out])
     w = np.concatenate([o[2] for o in out])
-    return ia, ib, w
+    ax = np.concatenate([o[3] for o in out])
+    return ia, ib, w, ax
 
 
 def leaf_edges(grid: LeafGrid, sigma) -> tuple[np.ndarray, np.ndarray,
                                                np.ndarray]:
     """Face conductances [S]: sigma is a scalar or per-leaf array of
     sheet conductance. Uniform limit -> exactly sigma per face."""
-    ia, ib, w = leaf_faces(grid)
+    ia, ib, w, _ = leaf_faces(grid)
     sig = np.broadcast_to(np.asarray(sigma, dtype=float), (grid.n,))
     g = w / (grid.size[ia] / (2.0 * sig[ia])
              + grid.size[ib] / (2.0 * sig[ib]))
@@ -166,6 +170,6 @@ def leaf_edges(grid: LeafGrid, sigma) -> tuple[np.ndarray, np.ndarray,
 
 def balanced(grid: LeafGrid) -> bool:
     """2:1 balance invariant: edge-adjacent leaves differ <= 2x in size."""
-    ia, ib, _ = leaf_faces(grid)
+    ia, ib, _, _ = leaf_faces(grid)
     sa, sb = grid.size[ia], grid.size[ib]
     return bool((np.maximum(sa, sb) <= 2 * np.minimum(sa, sb)).all())

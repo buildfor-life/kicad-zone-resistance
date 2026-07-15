@@ -55,6 +55,20 @@ ELECTRODE_POS_LAYER = "User.1"  # rectangles on this layer mark V+ contact parts
 ELECTRODE_NEG_LAYER = "User.2"  # rectangles on this layer mark V- contact parts
 ALWAYS_REFILL = False           # refill zones even if KiCad says they are filled
 
+# --- Adaptive grid ---
+ADAPTIVE_CELLS = False          # solve on a 2:1-balanced quadtree: fine at
+                                # copper boundaries/electrodes/features,
+                                # coarse plane interiors (dialog-toggleable).
+                                # Slight low bias (~0.5-1% on feature-dense
+                                # boards); large speed/memory wins on pours
+ADAPTIVE_MAX_CELL_UM = 2000.0   # coarsest leaf edge length. The MINIMUM
+                                # element size is the grid cell size itself
+                                # (auto / dialog / CELL_UM_OVERRIDE). Rarely
+                                # needs tuning: the guard distance already
+                                # caps leaf growth near features
+ADAPTIVE_GUARD = 4              # a leaf of size s needs >= GUARD*s cells of
+                                # clearance to the nearest feature
+
 # --- Solver ---
 CONTACT_MODEL = "uniform"       # "uniform": conductor pressed on top injects
                                 # orthogonally with uniform surface density

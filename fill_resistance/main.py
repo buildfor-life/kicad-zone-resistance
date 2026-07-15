@@ -86,6 +86,7 @@ def main() -> None:
                 e.contact = selection.contact2
         if selection.cell_um is not None:
             config.CELL_UM_OVERRIDE = selection.cell_um
+        config.ADAPTIVE_CELLS = selection.adaptive
 
         try:
             problem = board_io.build_problem(

@@ -134,6 +134,56 @@ def _sigma_2d(stack: RasterStack, li: int, sigma_layer: float,
     return s
 
 
+def _barrel_links(stack: RasterStack, problem: Problem
+                  ) -> tuple[list, int]:
+    """Vertical barrel links on the fine grid, shared by the uniform and
+    adaptive paths: [(via_index, layer_a, i_a, j_a, layer_b, i_b, j_b,
+    r_dc), ...] plus the count of dead barrels (span >= 2 layers but
+    reached copper on < 2). Connection cell per layer: the cell under
+    the barrel, or the nearest copper cell whose center lies within the
+    pad footprint (+1 cell of rasterization slop) - fills joined to the
+    barrel by thermal-relief spokes still connect, wider antipads do not
+    (the barrel then bridges the layers above/below)."""
+    L, ny, nx = stack.masks.shape
+    h = stack.h_nm
+    links = []
+    dead = 0
+    for vi, via in enumerate(problem.vias):
+        cell = stack.cell_of(via.x, via.y)
+        if cell is None:
+            continue
+        i, j = cell
+        span = [li for li, layer in enumerate(problem.layers)
+                if via.spans(layer.z_nm)]
+        r_nm = max(via.pad_nm, via.drill_nm + 300_000) / 2.0 + h
+        win = int(r_nm // h) + 1
+        i0, i1 = max(0, i - win), min(ny, i + win + 1)
+        j0, j1 = max(0, j - win), min(nx, j + win + 1)
+        xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - via.x
+        ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - via.y
+        d2 = ys[:, None] ** 2 + xs[None, :] ** 2
+        d2 = np.where(d2 <= r_nm * r_nm, d2, np.inf)
+        present = []                            # (layer, i, j) per layer
+        for li in span:
+            if stack.masks[li, i, j]:
+                present.append((li, i, j))
+                continue
+            dc = np.where(stack.masks[li, i0:i1, j0:j1], d2, np.inf)
+            ci, cj = np.unravel_index(int(np.argmin(dc)), dc.shape)
+            if np.isfinite(dc[ci, cj]):
+                present.append((li, i0 + ci, j0 + cj))
+        if len(span) >= 2 and len(present) < 2:
+            dead += 1
+        for (la, ia, ja), (lb, ib, jb) in zip(present[:-1], present[1:]):
+            length = problem.layers[lb].z_nm - problem.layers[la].z_nm
+            if length <= 0:
+                continue
+            r_dc = via.barrel_resistance(length, problem.rho_ohm_m,
+                                         problem.plating_nm)
+            links.append((vi, la, ia, ja, lb, ib, jb, r_dc))
+    return links, dead
+
+
 def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
                 via_factor: float = 1.0,
                 sigma_buildup: float = 0.0) -> Edges:
@@ -175,49 +225,12 @@ def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
                 ww.append(2.0 * s_a * s_b / (s_a + s_b))
             vv.append(np.full(len(a), -1, dtype=np.int32))
 
-    h = stack.h_nm
-    dead_barrels = 0
-    for vi, via in enumerate(problem.vias):
-        cell = stack.cell_of(via.x, via.y)
-        if cell is None:
-            continue
-        i, j = cell
-        span = [li for li, layer in enumerate(problem.layers)
-                if via.spans(layer.z_nm)]
-        # Connection cell per layer: the cell under the barrel, or the
-        # nearest copper cell whose center lies within the pad footprint
-        # (+1 cell of rasterization slop) - fills joined to the barrel by
-        # thermal-relief spokes still connect, wider antipads do not (the
-        # barrel then bridges the layers above/below as before).
-        r_nm = max(via.pad_nm, via.drill_nm + 300_000) / 2.0 + h
-        win = int(r_nm // h) + 1
-        i0, i1 = max(0, i - win), min(ny, i + win + 1)
-        j0, j1 = max(0, j - win), min(nx, j + win + 1)
-        xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - via.x
-        ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - via.y
-        d2 = ys[:, None] ** 2 + xs[None, :] ** 2
-        d2 = np.where(d2 <= r_nm * r_nm, d2, np.inf)
-        present = []                            # (layer, i, j) per layer
-        for li in span:
-            if stack.masks[li, i, j]:
-                present.append((li, i, j))
-                continue
-            dc = np.where(stack.masks[li, i0:i1, j0:j1], d2, np.inf)
-            ci, cj = np.unravel_index(int(np.argmin(dc)), dc.shape)
-            if np.isfinite(dc[ci, cj]):
-                present.append((li, i0 + ci, j0 + cj))
-        if len(span) >= 2 and len(present) < 2:
-            dead_barrels += 1
-        for (la, ia, ja), (lb, ib, jb) in zip(present[:-1], present[1:]):
-            length = problem.layers[lb].z_nm - problem.layers[la].z_nm
-            if length <= 0:
-                continue
-            r = via.barrel_resistance(length, problem.rho_ohm_m,
-                                      problem.plating_nm) * via_factor
-            aa.append(np.array([la * plane + ia * nx + ja], dtype=np.int64))
-            bb.append(np.array([lb * plane + ib * nx + jb], dtype=np.int64))
-            ww.append(np.array([1.0 / r]))
-            vv.append(np.array([vi], dtype=np.int32))
+    links, dead_barrels = _barrel_links(stack, problem)
+    for vi, la, ia, ja, lb, ib, jb, r_dc in links:
+        aa.append(np.array([la * plane + ia * nx + ja], dtype=np.int64))
+        bb.append(np.array([lb * plane + ib * nx + jb], dtype=np.int64))
+        ww.append(np.array([1.0 / (r_dc * via_factor)]))
+        vv.append(np.array([vi], dtype=np.int32))
 
     if stack.chain_edges is not None and len(stack.chain_edges[0]):
         ca, cb, cg, cl = stack.chain_edges
@@ -409,22 +422,11 @@ def _face_current_density(V2: np.ndarray, mask2: np.ndarray, sigma: float,
     return Jmag
 
 
-def _solve_equipotential(stack, e1, e2, edges):
-    """Dirichlet terminals at 1 V / 0 V. Returns (Vflat_unit, R, I1, I2,
-    mismatch, volts_per_amp, info). Fields at 1 V drive; scale by
-    i_test * R to get volts at I_test."""
-    if (layer := electrodes_touch(stack, e1, e2)) is not None:
-        raise ElectrodeError(
-            f"The terminals touch on {layer}. With the equipotential "
-            f"contact model at least one cell of copper must separate "
-            f"them; the uniform-injection model allows touching contacts."
-        )
-    state = np.zeros(stack.masks.size, dtype=np.uint8)
-    state[stack.masks.ravel()] = 1
-    state[e1.ravel()] = 2
-    state[e2.ravel()] = 3
-
-    A, rhs, idx = _assemble(state, edges, None)
+def _equipotential_core(state: np.ndarray, edges: Edges):
+    """Dirichlet solve on any node space (fine cells or leaves): state
+    codes 0 off / 1 free / 2 V+ / 3 V-. Returns (Vflat_unit, R, I1, I2,
+    mismatch, volts_per_amp, info); fields at 1 V drive."""
+    A, rhs, _ = _assemble(state, edges, None)
     x, info = solve_system(A, rhs)
 
     Vflat = np.zeros(state.size)
@@ -440,29 +442,14 @@ def _solve_equipotential(stack, e1, e2, edges):
     return Vflat, R, I1, I2, mismatch, R, info
 
 
-def _solve_uniform(stack, e1, e2, edges):
-    """Uniform orthogonal injection: every contact cell sources (sinks)
-    1 A / N. Grounded at one V- cell. Returns like _solve_equipotential;
-    fields are at 1 A drive, so volts_per_amp = 1."""
-    n = stack.masks.size
-    e1f, e2f = e1.ravel(), e2.ravel()
-    n1, n2 = int(e1f.sum()), int(e2f.sum())
-
-    inj = np.zeros(n)
-    inj[e1f] = 1.0 / n1
-    inj[e2f] = -1.0 / n2
-
-    state = np.zeros(n, dtype=np.uint8)
-    state[stack.masks.ravel()] = 1
-    ground = int(np.flatnonzero(e2f)[0])
-    state[ground] = 3                       # single Dirichlet 0 V reference;
-    # its sink share is exactly the flux that exits through the reference,
-    # so the grounded solution equals the pure-Neumann one
-
-    A, rhs, idx = _assemble(state, edges, inj)
+def _uniform_core(state: np.ndarray, inj: np.ndarray, e1f: np.ndarray,
+                  e2f: np.ndarray, edges: Edges):
+    """Uniform-injection solve on any node space. state must carry the
+    single ground node (code 3); inj the per-node current shares."""
+    A, rhs, _ = _assemble(state, edges, inj)
     x, info = solve_system(A, rhs)
 
-    Vflat = np.zeros(n)
+    Vflat = np.zeros(state.size)
     Vflat[state == 1] = x
 
     v_plus = float(Vflat[e1f].mean())
@@ -476,6 +463,42 @@ def _solve_uniform(stack, e1, e2, edges):
         res = float(np.linalg.norm(A @ x - rhs)
                     / max(np.linalg.norm(rhs), 1e-300))
     return Vflat, R, 1.0, 1.0, res, 1.0, info
+
+
+def _solve_equipotential(stack, e1, e2, edges):
+    """Dirichlet terminals at 1 V / 0 V on the uniform grid. Fields at
+    1 V drive; scale by i_test * R to get volts at I_test."""
+    if (layer := electrodes_touch(stack, e1, e2)) is not None:
+        raise ElectrodeError(
+            f"The terminals touch on {layer}. With the equipotential "
+            f"contact model at least one cell of copper must separate "
+            f"them; the uniform-injection model allows touching contacts."
+        )
+    state = np.zeros(stack.masks.size, dtype=np.uint8)
+    state[stack.masks.ravel()] = 1
+    state[e1.ravel()] = 2
+    state[e2.ravel()] = 3
+    return _equipotential_core(state, edges)
+
+
+def _solve_uniform(stack, e1, e2, edges):
+    """Uniform orthogonal injection on the uniform grid: every contact
+    cell sources (sinks) 1 A / N, grounded at one V- cell (its sink
+    share is exactly the flux that exits through the reference, so the
+    grounded solution equals the pure-Neumann one). Fields at 1 A."""
+    n = stack.masks.size
+    e1f, e2f = e1.ravel(), e2.ravel()
+    n1, n2 = int(e1f.sum()), int(e2f.sum())
+
+    inj = np.zeros(n)
+    inj[e1f] = 1.0 / n1
+    inj[e2f] = -1.0 / n2
+
+    state = np.zeros(n, dtype=np.uint8)
+    state[stack.masks.ravel()] = 1
+    ground = int(np.flatnonzero(e2f)[0])
+    state[ground] = 3
+    return _uniform_core(state, inj, e1f, e2f, edges)
 
 
 def _part_currents(parts, Ie, edges, e_flat, scale,
@@ -498,18 +521,12 @@ def _part_currents(parts, Ie, edges, e_flat, scale,
     return out
 
 
-def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
-              e2: np.ndarray, i_test: float, freq_hz: float = 0.0,
-              contact_model: str | None = None,
-              parts1: list | None = None,
-              parts2: list | None = None) -> Result:
-    timings = {}
-    L, ny, nx = stack.masks.shape
-    h_m = stack.h_nm * 1e-9
-    if contact_model is None:
-        contact_model = config.CONTACT_MODEL
-
-    # effective (AC) sheet conductances and barrel factor
+def _conductance_params(problem: Problem, stack: RasterStack,
+                        freq_hz: float):
+    """Effective (possibly AC) sheet conductances per layer, Rs ratios,
+    barrel factor and buildup conductance - shared by the uniform-grid
+    and adaptive solve paths."""
+    L = stack.nlayers
     sigmas = [
         1.0 / skin.sheet_resistance_ac(
             problem.layers[li].thickness_nm * 1e-9, freq_hz,
@@ -544,6 +561,28 @@ def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
               f"per-layer Rs ratio "
               f"{', '.join(f'{r:.2f}' for r in rs_ratios)}, "
               f"via factor {via_factor:.2f}")
+    return sigmas, rs_ratios, via_factor, sigma_buildup
+
+
+def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
+              e2: np.ndarray, i_test: float, freq_hz: float = 0.0,
+              contact_model: str | None = None,
+              parts1: list | None = None,
+              parts2: list | None = None) -> Result:
+    if contact_model is None:
+        contact_model = config.CONTACT_MODEL
+    if config.ADAPTIVE_CELLS:
+        from . import adaptive
+        return adaptive.run_solve_adaptive(problem, stack, e1, e2, i_test,
+                                           freq_hz, contact_model,
+                                           parts1, parts2)
+
+    timings = {}
+    L, ny, nx = stack.masks.shape
+    h_m = stack.h_nm * 1e-9
+
+    sigmas, rs_ratios, via_factor, sigma_buildup = \
+        _conductance_params(problem, stack, freq_hz)
 
     t0 = time.perf_counter()
     edges = build_edges(stack, problem, sigmas, via_factor, sigma_buildup)
