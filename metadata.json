@@ -1,0 +1,26 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v2",
+    "name": "Fill Resistance",
+    "description": "DC/AC resistance of copper zone fills between two contacts, single- or multi-layer with via coupling, with current and power density maps.",
+    "description_full": "Computes the DC resistance of copper zone fills between two contacts (marker rectangles on User.1/User.2 and/or selected pads), single- or multi-layer: the chosen net's fills are solved as coupled finite-difference sheets linked by the net's via and through-hole-pad barrels.\n\nShows per-layer rasterized maps, potential, current density and power density, reports per-via currents (via ampacity) and total dissipation at a selectable test current. Optional per-run frequency applies the exact 1D foil skin-effect correction (AC results are a rigorous lower bound). PNGs, a text summary and a re-solvable geometry dump are saved per run.\n\nNote: the first load builds the plugin's Python environment (numpy, scipy, matplotlib, PySide6) and can take several minutes.",
+    "identifier": "th.co.b4l.fill-resistance",
+    "type": "plugin",
+    "author": {
+        "name": "janik",
+        "contact": {
+            "email": "oltmanns@b4l.co.th"
+        }
+    },
+    "license": "GPL-3.0-or-later",
+    "resources": {
+        "homepage": "https://git.b4l.co.th/B4L/kicad-zone-resistance"
+    },
+    "versions": [
+        {
+            "version": "1.0.0",
+            "status": "stable",
+            "kicad_version": "10.0",
+            "runtime": "ipc"
+        }
+    ]
+}

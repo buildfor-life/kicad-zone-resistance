@@ -16,13 +16,20 @@ SWIG API. Requires KiCad **10.0.1+**.
 
 1. **Enable the API server**: KiCad → Preferences → Plugins → check
    *Enable KiCad API*.
-2. **Check the interpreter path** on the same page: should be
-   `C:\Program Files\KiCad\10.0\bin\pythonw.exe` (after a 9→10 upgrade it
+2. **Check the interpreter path** on the same page: should point at the
+   KiCad 10 Python, e.g. `C:\Program Files\KiCad\10.0\bin\pythonw.exe`
+   on Windows or `/usr/bin/python3` on Linux (after a 9→10 upgrade it
    can point at KiCad 9).
-3. **Deploy**:
+3. **Deploy** (dev checkout; end users install the PCM zip instead, see
+   *Packaging*):
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy.ps1        # junction (dev)
    powershell -ExecutionPolicy Bypass -File deploy.ps1 -Mode Copy
+   ```
+   Linux / macOS (also works on Windows with developer mode):
+   ```bash
+   python3 tools/deploy.py            # symlink (dev)
+   python3 tools/deploy.py --copy
    ```
 4. **Restart KiCad**; first load builds the plugin venv (numpy, scipy,
    matplotlib, PySide6 — takes minutes; the Ω button appears when done).
@@ -63,8 +70,12 @@ SWIG API. Requires KiCad **10.0.1+**.
   `VIA_PLATING_UM = 18` in `fill_resistance/config.py`. Vias are always
   plated; capped vs uncapped does not change the layer-to-layer DC path
   (the ≥5 µm cap sits over the hole mouth in parallel with the
-  annular-ring contact, not in series). A barrel passing an antipad
-  bridges the layers above/below with the full barrel length.
+  annular-ring contact, not in series). Per layer a barrel attaches to
+  the fill cell under it, or to the nearest copper cell within the pad
+  footprint plus one grid cell — fills joined by **thermal-relief
+  spokes** still connect; wider antipads do not, and the barrel bridges
+  the layers above/below with the full barrel length. Barrels that reach
+  fill on fewer than two layers carry no current and are reported.
 - Tracks and pad copper (other than the selected contacts) are **not**
   part of the conductor model — zone fills + barrels only.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
@@ -82,7 +93,11 @@ SWIG API. Requires KiCad **10.0.1+**.
   with uniform surface density, so |J| ramps across the contact area
   (R = ΔV̄/I from area-averaged terminal potentials); or
   **equipotential** — ideal bonded lug (Dirichlet). The two bracket a
-  real contact: R_equipotential ≤ R_real ≤ R_uniform.
+  real contact: R_equipotential ≤ R_real ≤ R_uniform. If the selected
+  fills form several disconnected copper groups that each touch both
+  terminals (e.g. planes joined only through the bolted lugs), only the
+  equipotential model is well-defined; the uniform model stops with an
+  error instead of prescribing an arbitrary split.
 - Fields are reported at the dialog's test current; power scales with I².
 - **Skin effect (f > 0)**: per-layer effective sheet resistance from the
   exact 1D foil-diffusion solution `Zs = τρ·coth(τt)`, `τ = (1+j)/δ`
@@ -96,8 +111,8 @@ SWIG API. Requires KiCad **10.0.1+**.
   minimum-dissipation one, AC results are a rigorous **lower bound**.
   Rule of thumb for 70 µm foil: skin is negligible below ~300 kHz
   (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz.
-- 5-point FDM per layer on an auto-sized shared grid (~500 k cells total
-  across layers by default). Direct sparse solve up to 700 k unknowns,
+- 5-point FDM per layer on an auto-sized shared grid (~2 M cells total
+  across layers by default). Direct sparse solve up to 2.5 M unknowns,
   Jacobi-CG above. Discretization error typically ≲ 2 % at defaults —
   halve the cell size and compare to judge convergence.
 
@@ -111,15 +126,31 @@ Every run writes `geometry_dump.json`; re-solve without KiCad:
     [--out DIR] [--force-iterative]
 ```
 
-Dev environment, tests, headless extraction:
+Dev environment, tests, headless extraction (Windows shown; on
+Linux/macOS use `.venv/bin/python`):
 
 ```powershell
 uv venv --python 3.11 .venv
 uv pip install --python .venv\Scripts\python.exe kicad-python numpy scipy matplotlib pytest
 .venv\Scripts\python.exe -m pytest tests -q          # incl. exact analytic cases
-.venv\Scripts\python.exe smoke\smoke_probe.py        # IPC API probe vs live KiCad
+.venv\Scripts\python.exe tools\api_probe.py          # IPC API probe vs live KiCad
 .venv\Scripts\python.exe -m fill_resistance.board_io dump.json [NET]  # extract only
 ```
+
+## Packaging / publishing
+
+`python tools/build_package.py` builds the PCM addon zip in `dist/`
+(installable right away via Plugin and Content Manager → *Install from
+File*) plus `dist/metadata-registry.json` with the SHA-256 and sizes
+filled in. To publish: upload the zip to a release, set `download_url`
+(and the `homepage` resource in `metadata.json`), then submit the
+registry copy as `packages/th.co.b4l.fill-resistance/metadata.json` in a
+merge request to <https://gitlab.com/kicad/addons/metadata>. Icons are
+regenerated with `python tools/gen_icons.py`.
+
+## License
+
+GPL-3.0-or-later — see [LICENSE.txt](LICENSE.txt).
 
 ## Troubleshooting
 
