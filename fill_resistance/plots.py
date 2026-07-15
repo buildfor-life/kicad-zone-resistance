@@ -7,6 +7,8 @@ with os.startfile on the saved PNGs so results are never silent.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -206,13 +208,16 @@ def fig_raster(stack, e1, e2, problem, result=None):
 def fig_potential(result, stack, e1, e2, problem):
     fig, axes = _layer_fig(stack, "Fill Resistance - potential")
     vmax = float(np.nanmax(result.V))
+    # uniform model: <V-> = 0 is the reference, individual V- cells can
+    # sit slightly below it - keep them in range instead of clipping
+    vmin = min(0.0, float(np.nanmin(result.V)))
     unit, scale = ("mV", 1e3) if vmax < 0.1 else ("V", 1.0)
     cmap = matplotlib.colormaps[config.CMAP_POTENTIAL].copy()
     cmap.set_bad(_BG)
     im = None
     for li, ax in enumerate(axes):
         vs = result.V[li] * scale
-        im = ax.imshow(vs, cmap=cmap, vmin=0, vmax=vmax * scale,
+        im = ax.imshow(vs, cmap=cmap, vmin=vmin * scale, vmax=vmax * scale,
                        origin="upper", extent=stack.extent_mm(),
                        interpolation="nearest")
         if np.isfinite(vs).sum() > 4:
@@ -383,9 +388,20 @@ def save_and_show(figs_named: list[tuple], outdir: Path | None,
             plt.show()
         else:
             for p in saved:
-                try:
-                    os.startfile(p)  # windows: open in default viewer
-                except Exception:
-                    pass
+                _open_in_viewer(p)
     plt.close("all")
     return saved
+
+
+def _open_in_viewer(path: Path) -> None:
+    """Open a saved PNG in the OS default viewer (no-GUI-backend
+    fallback so results are never silent)."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception:
+        pass
