@@ -97,7 +97,11 @@ def choose_cell_size(bbox_nm: tuple[int, int, int, int], nlayers: int) -> float:
             )
         h = config.CELL_UM_OVERRIDE * 1000.0
     else:
-        h = math.sqrt(w * ht * nlayers / config.TARGET_CELLS)
+        # the adaptive grid decouples unknowns from the fine cell count,
+        # so its auto sizing affords a larger fine-cell budget (finer h)
+        target = (config.TARGET_CELLS_ADAPTIVE if config.ADAPTIVE_CELLS
+                  else config.TARGET_CELLS)
+        h = math.sqrt(w * ht * nlayers / target)
         h = min(max(h, config.MIN_CELL_UM * 1000.0), config.MAX_CELL_UM * 1000.0)
 
     ncells = math.ceil(w / h) * math.ceil(ht / h) * nlayers

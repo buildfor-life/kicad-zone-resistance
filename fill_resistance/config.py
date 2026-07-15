@@ -56,11 +56,16 @@ ELECTRODE_NEG_LAYER = "User.2"  # rectangles on this layer mark V- contact parts
 ALWAYS_REFILL = False           # refill zones even if KiCad says they are filled
 
 # --- Adaptive grid ---
-ADAPTIVE_CELLS = False          # solve on a 2:1-balanced quadtree: fine at
+ADAPTIVE_CELLS = True           # solve on a 2:1-balanced quadtree: fine at
                                 # copper boundaries/electrodes/features,
                                 # coarse plane interiors (dialog-toggleable).
-                                # Slight low bias (~0.5-1% on feature-dense
-                                # boards); large speed/memory wins on pours
+                                # With the deferred-correction pass the
+                                # deviation from the uniform grid is <0.03%
+                                # measured; untick for the reference grid
+TARGET_CELLS_ADAPTIVE = 8_000_000  # auto cell-size budget with the adaptive
+                                # grid: unknowns no longer scale with the
+                                # fine cell count, so the auto sizer picks
+                                # a ~2x finer h (memory-bound: masks/fields)
 ADAPTIVE_MAX_CELL_UM = 2000.0   # coarsest leaf edge length. The MINIMUM
                                 # element size is the grid cell size itself
                                 # (auto / dialog / CELL_UM_OVERRIDE). Rarely

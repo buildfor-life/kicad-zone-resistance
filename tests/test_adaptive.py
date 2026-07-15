@@ -165,6 +165,22 @@ def test_part_currents_and_ac(monkeypatch):
     assert ada.rs_ratios == ref.rs_ratios
 
 
+def test_auto_cell_size_finer_with_adaptive(monkeypatch):
+    """The auto sizer affords a larger fine-cell budget (finer h) when
+    the adaptive grid is on."""
+    from fill_resistance import raster
+    p = make_problem([([(0, 0), (300, 0), (300, 200), (0, 200)], [])],
+                     rect1_mm=(0, 90, 2, 110), rect2_mm=(298, 90, 300, 110))
+    monkeypatch.setattr(config, "ADAPTIVE_CELLS", False)
+    h_uniform = raster.choose_cell_size(p.copper_bbox(), 1)
+    monkeypatch.setattr(config, "ADAPTIVE_CELLS", True)
+    h_adaptive = raster.choose_cell_size(p.copper_bbox(), 1)
+    assert h_adaptive < h_uniform
+    assert h_adaptive == pytest.approx(
+        h_uniform / (config.TARGET_CELLS_ADAPTIVE
+                     / config.TARGET_CELLS) ** 0.5, rel=1e-9)
+
+
 def test_max_cell_size_respected(monkeypatch):
     from fill_resistance.adaptive import _max_block
     assert _max_block(100_000.0) == 16      # 2000 um / 100 um cells

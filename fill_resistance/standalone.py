@@ -47,9 +47,11 @@ def main(argv=None) -> int:
     ap.add_argument("--force-iterative", action="store_true",
                     help="use the iterative solver (AMG-CG, or Jacobi-CG "
                          "without pyamg) regardless of problem size")
-    ap.add_argument("--adaptive", action="store_true",
-                    help="solve on the adaptive quadtree grid (coarse "
-                         "plane interiors)")
+    ap.add_argument("--adaptive", action=argparse.BooleanOptionalAction,
+                    default=None,
+                    help="adaptive quadtree grid (coarse plane interiors); "
+                         "default: config (on). --no-adaptive forces the "
+                         "uniform reference grid")
     args = ap.parse_args(argv)
 
     if args.cell_um is not None:
@@ -58,8 +60,8 @@ def main(argv=None) -> int:
         config.INTERACTIVE = False
     if args.force_iterative:
         config.SPSOLVE_MAX_UNKNOWNS = 0
-    if args.adaptive:
-        config.ADAPTIVE_CELLS = True
+    if args.adaptive is not None:
+        config.ADAPTIVE_CELLS = args.adaptive
 
     problem = load_problem(args.dump)
     if args.strip_buildup:

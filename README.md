@@ -132,12 +132,14 @@ SWIG API. Requires KiCad **10.0.1+**.
   minimum-dissipation one, AC results are a rigorous **lower bound**.
   Rule of thumb for 70 µm foil: skin is negligible below ~300 kHz
   (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz.
-- 5-point FDM per layer on an auto-sized shared grid (~2 M cells total
-  across layers by default). Direct sparse solve up to 500 k unknowns,
-  AMG-preconditioned CG (pyamg) above — Jacobi-CG if pyamg is missing.
-  Discretization error typically ≲ 2 % at defaults — halve the cell size
-  and compare to judge convergence.
-- **Adaptive cells** (dialog checkbox, off by default; `ADAPTIVE_CELLS`):
+- 5-point FDM per layer on an auto-sized shared grid (~2 M fine cells
+  with the uniform grid; ~8 M with the adaptive grid, whose unknown
+  count no longer scales with them). Direct sparse solve up to 500 k
+  unknowns, AMG-preconditioned CG (pyamg) above — Jacobi-CG if pyamg is
+  missing. Discretization error typically ≲ 2 % at defaults — halve the
+  cell size and compare to judge convergence.
+- **Adaptive cells** (dialog checkbox, **on by default**;
+  `ADAPTIVE_CELLS`):
   solves on a 2:1-balanced quadtree — fine cells at copper boundaries,
   electrodes, traces, via mouths and buildup, blocks up to
   `ADAPTIVE_MAX_CELL_UM` (2 mm) in plane interiors (`ADAPTIVE_GUARD`
