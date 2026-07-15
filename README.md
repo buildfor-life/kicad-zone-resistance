@@ -114,9 +114,10 @@ SWIG API. Requires KiCad **10.0.1+**.
   Rule of thumb for 70 µm foil: skin is negligible below ~300 kHz
   (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz.
 - 5-point FDM per layer on an auto-sized shared grid (~2 M cells total
-  across layers by default). Direct sparse solve up to 2.5 M unknowns,
-  Jacobi-CG above. Discretization error typically ≲ 2 % at defaults —
-  halve the cell size and compare to judge convergence.
+  across layers by default). Direct sparse solve up to 500 k unknowns,
+  AMG-preconditioned CG (pyamg) above — Jacobi-CG if pyamg is missing.
+  Discretization error typically ≲ 2 % at defaults — halve the cell size
+  and compare to judge convergence.
 
 ## Offline / development
 
@@ -133,7 +134,7 @@ Linux/macOS use `.venv/bin/python`):
 
 ```powershell
 uv venv --python 3.11 .venv
-uv pip install --python .venv\Scripts\python.exe kicad-python numpy scipy matplotlib pytest
+uv pip install --python .venv\Scripts\python.exe kicad-python numpy scipy pyamg matplotlib pytest
 .venv\Scripts\python.exe -m pytest tests -q          # incl. exact analytic cases
 .venv\Scripts\python.exe tools\api_probe.py          # IPC API probe vs live KiCad
 .venv\Scripts\python.exe -m fill_resistance.board_io dump.json [NET]  # extract only

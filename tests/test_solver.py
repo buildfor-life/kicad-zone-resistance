@@ -79,10 +79,21 @@ def test_hole_increases_resistance_and_converges():
     assert abs(r_a.R_ohm - r_b.R_ohm) < 0.01 * r_b.R_ohm
 
 
-def test_cg_path_matches_direct(monkeypatch):
+def test_iterative_paths_match_direct(monkeypatch):
+    """AMG-CG (default iterative) and Jacobi-CG (pyamg-missing fallback)
+    both reproduce the direct solve."""
     p = strip_problem(length=50, width=10, e_len=5)
     r_direct, _ = _solve(p, 0.25)
     monkeypatch.setattr(config, "SPSOLVE_MAX_UNKNOWNS", 0)
+    r_amg, _ = _solve(p, 0.25)
+    assert r_amg.solve_info.method == "amg+cg"
+    assert r_amg.R_ohm == pytest.approx(r_direct.R_ohm, rel=1e-6)
+    assert r_amg.mismatch_rel < 1e-5
+
+    def no_pyamg(A, b):
+        raise ImportError("pyamg unavailable")
+
+    monkeypatch.setattr(solver, "_solve_amg", no_pyamg)
     r_cg, _ = _solve(p, 0.25)
     assert r_cg.solve_info.method == "cg+jacobi"
     assert r_cg.R_ohm == pytest.approx(r_direct.R_ohm, rel=1e-6)

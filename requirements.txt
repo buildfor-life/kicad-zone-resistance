@@ -1,5 +1,6 @@
 kicad-python>=0.7.0
 numpy
 scipy
+pyamg
 matplotlib
 PySide6

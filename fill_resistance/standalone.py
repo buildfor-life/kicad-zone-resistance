@@ -42,7 +42,8 @@ def main(argv=None) -> int:
     ap.add_argument("--extra-cu-um", type=float, default=None,
                     help="override the added copper in mask openings [um]")
     ap.add_argument("--force-iterative", action="store_true",
-                    help="use CG (Jacobi) regardless of problem size")
+                    help="use the iterative solver (AMG-CG, or Jacobi-CG "
+                         "without pyamg) regardless of problem size")
     args = ap.parse_args(argv)
 
     if args.cell_um is not None:

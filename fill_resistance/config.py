@@ -5,10 +5,9 @@ A future version may read overrides from <project>/fill_res_config.json.
 
 # --- Grid sizing ---
 # Benchmarked on the VOUT+ plane (147x59 mm): R changes < 0.3% from
-# 150 um cells down to 50 um; 1.7M unknowns direct-solve in ~17 s
-# (raster ~20 s). Accuracy is feature-limited (slots/necks narrower than
-# one cell), not plane-limited - override CELL_UM_OVERRIDE for boards
-# with sub-cell slots.
+# 150 um cells down to 50 um. Accuracy is feature-limited (slots/necks
+# narrower than one cell), not plane-limited - override CELL_UM_OVERRIDE
+# for boards with sub-cell slots.
 TARGET_CELLS = 2_000_000        # auto cell size aims for roughly this many cells
 HARD_MAX_CELLS = 16_000_000     # abort above this (see GridSizeError message)
 MIN_CELL_UM = 25.0              # clamp for auto cell size
@@ -51,10 +50,13 @@ CONTACT_MODEL = "uniform"       # "uniform": conductor pressed on top injects
                                 # (J ramps across the contact); "equipotential":
                                 # ideal bonded lug (Dirichlet). The two bracket
                                 # a real contact: R_equi <= R_real <= R_uniform.
-SPSOLVE_MAX_UNKNOWNS = 2_500_000  # above this, use CG (Jacobi) instead of
-                                  # direct solve (measured: direct is ~14x
-                                  # faster at 1.7M unknowns, ~3 GB peak)
-CG_TOL = 1e-8
+SPSOLVE_MAX_UNKNOWNS = 500_000  # above this, AMG-preconditioned CG (pyamg;
+                                # Jacobi-CG if pyamg is missing). Direct is
+                                # exact and fastest for small grids; measured
+                                # at 1.4M unknowns: spsolve 13 s / ~3 GB,
+                                # AMG-CG 6 s at a fraction of the memory
+AMG_TOL = 1e-10                 # relative residual of the AMG-CG solve
+CG_TOL = 1e-8                   # Jacobi-CG fallback (no pyamg)
 CG_MAXITER = 50_000             # CG iterations are cheap; large grids need many
 
 # --- Geometry ---

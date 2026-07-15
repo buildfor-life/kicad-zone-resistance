@@ -22,6 +22,35 @@ def test_exact_cell_count_square_with_hole():
     assert int(stack.masks[0].sum()) == 100 - 16
 
 
+def test_hybrid_raster_matches_exact_point_test():
+    """The PIL-fill + exact-edge-band rasterizer must be cell-for-cell
+    identical to a pure center-in-polygon pass, including awkward
+    fractional offsets, concave lobes and a hole."""
+    from matplotlib.path import Path as MplPath
+    ang = np.linspace(0, 2 * np.pi, 257, endpoint=False)
+    r = 7.3 + 1.7 * np.sin(5 * ang) + 0.9 * np.cos(9 * ang + 0.4)
+    blob = np.stack([20.05 + r * np.cos(ang), 20.13 + r * np.sin(ang)],
+                    axis=1)
+    hole = np.stack([20.4 + 2.1 * np.cos(ang), 19.8 + 2.2 * np.sin(ang)],
+                    axis=1)
+    p = make_problem([(blob.tolist(), [hole.tolist()])],
+                     rect1_mm=(14, 19, 16, 21), rect2_mm=(24, 19, 26, 21))
+    stack = _stack(p, 0.25)
+
+    ny, nx = stack.shape2d
+    xg, yg = stack.cell_centers(0, ny, 0, nx)
+    pts = np.column_stack([xg.ravel(), yg.ravel()])
+
+    def exact(ring):
+        verts = np.vstack([ring, ring[:1]])
+        return MplPath(verts, closed=True).contains_points(pts).reshape(
+            ny, nx)
+
+    poly = p.layers[0].polygons[0]
+    ref = exact(poly.outline) & ~exact(poly.holes[0])
+    assert np.array_equal(stack.masks[0], ref)
+
+
 def test_margin_cells_are_empty():
     p = strip_problem()
     stack = _stack(p, 0.5)

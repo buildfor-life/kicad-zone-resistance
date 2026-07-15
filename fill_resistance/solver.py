@@ -293,10 +293,40 @@ def solve_system(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, Solve
     if n <= config.SPSOLVE_MAX_UNKNOWNS:
         x = sla.spsolve(A.tocsc(), b)
         return x, SolveInfo(method="spsolve", n_unknowns=n)
+    try:
+        return _solve_amg(A, b)
+    except ImportError:
+        print("note: pyamg not installed - falling back to Jacobi-CG "
+              "(much slower on large grids)")
+        return _solve_cg_jacobi(A, b)
 
+
+def _solve_amg(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, SolveInfo]:
+    """CG preconditioned with smoothed-aggregation AMG: near-linear
+    scaling on these 2D Laplacians and a fraction of spsolve's memory."""
+    import pyamg
+
+    n = A.shape[0]
+    ml = pyamg.smoothed_aggregation_solver(A.tocsr(), max_coarse=500)
+    residuals: list[float] = []
+    x = ml.solve(b, tol=config.AMG_TOL, maxiter=300, accel="cg",
+                 residuals=residuals)
+    res = float(np.linalg.norm(b - A @ x) / max(np.linalg.norm(b), 1e-300))
+    if not np.isfinite(res) or res > 1e-6:
+        raise SolverError(
+            f"AMG-CG did not converge (residual {res:.2e}). Try a "
+            f"different grid size, or force the direct solver by raising "
+            f"SPSOLVE_MAX_UNKNOWNS in config.py."
+        )
+    return x, SolveInfo(method="amg+cg", n_unknowns=n,
+                        iterations=max(len(residuals) - 1, 0), residual=res)
+
+
+def _solve_cg_jacobi(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, SolveInfo]:
     # The matrix is SPD, so CG is guaranteed to converge. Jacobi is the
     # only preconditioner in scipy that keeps the preconditioned operator
     # SPD without a factorization that can break down at this scale.
+    n = A.shape[0]
     d = A.diagonal()
     M = sla.LinearOperator((n, n), lambda v: v / d)
     iters = 0

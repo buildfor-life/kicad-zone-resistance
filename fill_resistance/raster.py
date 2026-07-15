@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from matplotlib.path import Path as MplPath
+from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from . import config
@@ -106,7 +107,10 @@ def choose_cell_size(bbox_nm: tuple[int, int, int, int], nlayers: int) -> float:
 def _paint_ring(stack: RasterStack, ring: np.ndarray, value: bool,
                 target: np.ndarray) -> None:
     """Set target (2D) cells whose center lies inside ring to `value`,
-    testing only cells within the ring's bbox (cheap for small holes)."""
+    working only within the ring's bbox. Hybrid rasterizer: PIL scanline
+    fill for the bulk (fast, O(vertices + cells)), then the cells within
+    a ~2 px band around the ring edge are re-tested exactly against the
+    polygon, so the result is identical to a pure center-in-polygon pass."""
     ny, nx = stack.shape2d
     h = stack.h_nm
     j0 = max(0, int((ring[:, 0].min() - stack.x0_nm) / h) - 1)
@@ -115,13 +119,35 @@ def _paint_ring(stack: RasterStack, ring: np.ndarray, value: bool,
     i1 = min(ny, int((ring[:, 1].max() - stack.y0_nm) / h) + 2)
     if i0 >= i1 or j0 >= j1:
         return
-    xg, yg = stack.cell_centers(i0, i1, j0, j1)
-    pts = np.column_stack([xg.ravel(), yg.ravel()])
-    # Path(closed=True) treats the LAST vertex as the CLOSEPOLY dummy, so
-    # the first vertex must be appended or the ring loses its last corner
-    verts = np.vstack([ring, ring[:1]])
-    inside = MplPath(verts, closed=True).contains_points(pts)
-    inside = inside.reshape(i1 - i0, j1 - j0)
+    w, ht = j1 - j0, i1 - i0
+
+    # cell (i, j) center <-> pixel (j - j0, i - i0)
+    px = (ring[:, 0] - stack.x0_nm) / h - 0.5 - j0
+    py = (ring[:, 1] - stack.y0_nm) / h - 0.5 - i0
+    pts = list(zip(px.tolist(), py.tolist()))
+
+    inside = np.zeros((ht, w), dtype=bool)
+    band = np.ones((ht, w), dtype=bool)
+    if len(pts) >= 3:
+        fill_img = Image.new("1", (w, ht), 0)
+        ImageDraw.Draw(fill_img).polygon(pts, fill=1)
+        inside = np.array(fill_img, dtype=bool)
+        band_img = Image.new("1", (w, ht), 0)
+        ImageDraw.Draw(band_img).line(pts + pts[:1], fill=1, width=5,
+                                      joint="curve")
+        band = np.array(band_img, dtype=bool)
+
+    bi, bj = np.nonzero(band)
+    if len(bi):
+        xs = stack.x0_nm + (bj + j0 + 0.5) * h
+        ys = stack.y0_nm + (bi + i0 + 0.5) * h
+        # Path(closed=True) treats the LAST vertex as the CLOSEPOLY dummy,
+        # so the first vertex must be appended or the ring loses its last
+        # corner
+        verts = np.vstack([ring, ring[:1]])
+        inside[bi, bj] = MplPath(verts, closed=True).contains_points(
+            np.column_stack([xs, ys]))
+
     sub = target[i0:i1, j0:j1]
     sub[inside] = value
 
