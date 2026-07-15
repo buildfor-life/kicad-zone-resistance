@@ -81,8 +81,11 @@ def _layer_fig(stack, window_title: str):
     aspect = ny / nx
     w = 9.5
     row_h = min(max(w * aspect * 0.9 + 0.6, 1.8), 8.5 / L)
+    # constrained layout re-runs on every draw, so the figure reflows
+    # when the user resizes the window (tight_layout is one-shot)
     fig, axes = plt.subplots(L, 1, figsize=(w, row_h * L + 1.4),
-                             sharex=True, sharey=True, squeeze=False)
+                             sharex=True, sharey=True, squeeze=False,
+                             layout="constrained")
     axes = axes[:, 0]
     if INTERACTIVE_BACKEND:
         fig.canvas.manager.set_window_title(window_title)
@@ -201,7 +204,6 @@ def fig_raster(stack, e1, e2, problem, result=None):
                    framealpha=0.9)
     fig.suptitle("Rasterized fill + electrodes  |  "
                  + _suptitle(problem, stack, result), fontsize=10, color=_INK)
-    fig.tight_layout()
     return fig
 
 
@@ -308,7 +310,7 @@ def fig_power(result, stack, e1, e2, problem):
 
 
 def fig_error(message: str):
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    fig, ax = plt.subplots(figsize=(9, 4.5), layout="constrained")
     ax.axis("off")
     ax.set_title("Fill Resistance — ERROR", color="#b02a2a",
                  fontsize=14, fontweight="bold", loc="left")
@@ -317,7 +319,6 @@ def fig_error(message: str):
     )
     ax.text(0.0, 0.95, wrapped, family="monospace", fontsize=9,
             va="top", ha="left", color=_INK, transform=ax.transAxes)
-    fig.tight_layout()
     return fig
 
 
@@ -352,6 +353,27 @@ def _resolve_label_overlaps(fig):
             placed.append(bb)
 
 
+def _fit_to_screen(fig) -> None:
+    """Best effort: shrink the window so it fits the screen. Runs AFTER
+    the PNGs are saved (so their size is unaffected); the constrained
+    layout reflows the content on every subsequent resize."""
+    try:
+        win = fig.canvas.manager.window
+        if hasattr(win, "screen"):                      # Qt
+            avail = win.screen().availableGeometry()
+            sw, sh = avail.width(), avail.height()
+        elif hasattr(win, "winfo_screenwidth"):         # Tk
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        else:
+            return
+        w, h = fig.get_size_inches()
+        scale = min(0.9 * sw / (w * fig.dpi), 0.85 * sh / (h * fig.dpi), 1.0)
+        if scale < 1.0:
+            fig.set_size_inches(w * scale, h * scale, forward=True)
+    except Exception:
+        pass
+
+
 def _raise_windows():
     """Best effort: bring plot windows in front of KiCad (windows spawned
     by a background process tend to open behind)."""
@@ -384,6 +406,8 @@ def save_and_show(figs_named: list[tuple], outdir: Path | None,
             print(f"saved {p}")
     if show and config.INTERACTIVE:
         if INTERACTIVE_BACKEND:
+            for fig, _ in figs_named:
+                _fit_to_screen(fig)
             _raise_windows()
             plt.show()
         else:
