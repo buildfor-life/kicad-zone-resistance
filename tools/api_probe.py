@@ -1,7 +1,7 @@
-"""M1 smoke probe: verify the IPC API surface against a live KiCad.
+"""IPC API probe: verify the kipy API surface against a live KiCad.
 
 Run from the dev venv while KiCad is open with the board loaded:
-    .venv\\Scripts\\python.exe smoke\\smoke_probe.py
+    .venv\\Scripts\\python.exe tools\\api_probe.py
 
 Deliberately uses kipy directly (not board_io) so it works even if
 board_io has a bug. Prints: version, board path, selection contents,
@@ -92,7 +92,7 @@ def main():
     except Exception:
         traceback.print_exc()
 
-    print("\nsmoke probe DONE")
+    print("\nAPI probe DONE")
     return 0
 
 
