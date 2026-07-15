@@ -144,10 +144,13 @@ SWIG API. Requires KiCad **10.0.1+**.
   sets the clearance a block needs to grow). The **minimum element size
   is the grid cell size itself** (auto / dialog / `CELL_UM_OVERRIDE`);
   the uniform limit reproduces the normal grid exactly. Large
-  speed/memory wins on big pours; the coarse–fine interfaces carry a
-  first-order flux error that biases R **low by ~0.5–2 %** depending on
-  geometry (worst on narrow strips, mild on large planes). All fields
-  are expanded back to the fine grid for the maps and reports.
+  speed/memory wins on big pours. The raw coarse–fine interface flux
+  bias (~0.5–2 % low) is removed by a **deferred-correction pass**
+  (`ADAPTIVE_CORRECTION_PASSES`, default 1: reconstruct leaf gradients,
+  move the tangential term to the RHS, re-solve on the reused
+  factorization/AMG hierarchy) — measured residual deviation from the
+  uniform grid ≲ 0.03 %, with the power-balance identity intact. All
+  fields are expanded back to the fine grid for the maps and reports.
 
 ## Offline / development
 

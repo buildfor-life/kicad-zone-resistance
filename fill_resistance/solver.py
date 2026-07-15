@@ -339,6 +339,52 @@ def solve_system(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, Solve
         return _solve_cg_jacobi(A, b)
 
 
+class PreparedSolver:
+    """Factor/set up once, solve several right-hand sides with the SAME
+    matrix (deferred-correction passes): the direct path keeps the LU,
+    the iterative path keeps the AMG hierarchy."""
+
+    def __init__(self, A: sparse.csr_matrix):
+        self.n = A.shape[0]
+        self._A = A.tocsr()
+        self._lu = None
+        self._ml = None
+        if self.n <= config.SPSOLVE_MAX_UNKNOWNS:
+            self._lu = sla.splu(A.tocsc())
+            self.method = "spsolve"
+        else:
+            try:
+                import pyamg
+                self._ml = pyamg.smoothed_aggregation_solver(self._A,
+                                                             max_coarse=500)
+                self.method = "amg+cg"
+            except ImportError:
+                print("note: pyamg not installed - falling back to "
+                      "Jacobi-CG (much slower on large grids)")
+                self.method = "cg+jacobi"
+
+    def solve(self, b: np.ndarray) -> tuple[np.ndarray, SolveInfo]:
+        if self._lu is not None:
+            return self._lu.solve(b), SolveInfo(method="spsolve",
+                                                n_unknowns=self.n)
+        if self._ml is not None:
+            residuals: list[float] = []
+            x = self._ml.solve(b, tol=config.AMG_TOL, maxiter=300,
+                               accel="cg", residuals=residuals)
+            res = float(np.linalg.norm(b - self._A @ x)
+                        / max(np.linalg.norm(b), 1e-300))
+            if not np.isfinite(res) or res > 1e-6:
+                raise SolverError(
+                    f"AMG-CG did not converge (residual {res:.2e}). Try a "
+                    f"different grid size, or force the direct solver by "
+                    f"raising SPSOLVE_MAX_UNKNOWNS in config.py."
+                )
+            return x, SolveInfo(method="amg+cg", n_unknowns=self.n,
+                                iterations=max(len(residuals) - 1, 0),
+                                residual=res)
+        return _solve_cg_jacobi(self._A, b)
+
+
 def _solve_amg(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, SolveInfo]:
     """CG preconditioned with smoothed-aggregation AMG: near-linear
     scaling on these 2D Laplacians and a fraction of spsolve's memory."""

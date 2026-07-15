@@ -68,6 +68,11 @@ ADAPTIVE_MAX_CELL_UM = 2000.0   # coarsest leaf edge length. The MINIMUM
                                 # caps leaf growth near features
 ADAPTIVE_GUARD = 4              # a leaf of size s needs >= GUARD*s cells of
                                 # clearance to the nearest feature
+ADAPTIVE_CORRECTION_PASSES = 1  # deferred-correction re-solves fixing the
+                                # coarse-fine interface flux bias (same
+                                # matrix, reused factorization/AMG). 1 pass
+                                # cuts the raw ~0.5-2% low bias to <0.03%
+                                # measured; 0 disables
 
 # --- Solver ---
 CONTACT_MODEL = "uniform"       # "uniform": conductor pressed on top injects

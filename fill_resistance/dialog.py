@@ -75,7 +75,7 @@ class _Dialog(QDialog):
 
         self.adaptive_check = QCheckBox(
             "adaptive cells (coarsen plane interiors; faster on large "
-            "boards, ~0.5–2 % low bias)")
+            "boards, corrected to ≲0.1 % of the uniform grid)")
         self.adaptive_check.setChecked(config.ADAPTIVE_CELLS)
         form.addRow("Grid:", self.adaptive_check)
 

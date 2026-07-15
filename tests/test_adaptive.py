@@ -27,19 +27,37 @@ def _run(problem, h_mm, model="equipotential", adaptive=False,
 
 
 def test_strip_close_both_models(monkeypatch):
-    """Uniform strip, both contact models. Coarse-fine interfaces carry
-    a first-order tangential flux error (laterally offset leaf centers),
-    so adaptive R sits up to ~2% LOW of the production R - the narrow
-    strip is the worst case (transition rings span most of the width)."""
+    """Uniform strip, both contact models. The raw interface flux error
+    (~1.7% low here, the worst case) is removed by the default deferred-
+    correction pass; the corrected currents keep the power identity."""
     for model in ("equipotential", "uniform"):
         p = strip_problem(length=50, width=10, e_len=5)
         ref = _run(p, 0.25, model, adaptive=False, monkeypatch=monkeypatch)
         p2 = strip_problem(length=50, width=10, e_len=5)
         ada = _run(p2, 0.25, model, adaptive=True, monkeypatch=monkeypatch)
-        assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=0.02), model
-        assert ada.R_ohm <= ref.R_ohm * 1.001    # bias is low, not high
+        assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=2e-3), model
         assert ada.n_free < ref.n_free
         assert ada.power_balance_rel < 1e-9
+
+
+def test_correction_passes_remove_bias(monkeypatch):
+    """0 passes shows the raw coarse-fine bias; the default single pass
+    removes it by more than an order of magnitude."""
+    p = strip_problem(length=50, width=10, e_len=5)
+    ref = _run(p, 0.25, adaptive=False, monkeypatch=monkeypatch)
+
+    monkeypatch.setattr(config, "ADAPTIVE_CORRECTION_PASSES", 0)
+    raw = _run(strip_problem(length=50, width=10, e_len=5), 0.25,
+               adaptive=True, monkeypatch=monkeypatch)
+    err_raw = abs(raw.R_ohm / ref.R_ohm - 1)
+    assert err_raw > 5e-3                      # bias is real without it
+
+    monkeypatch.setattr(config, "ADAPTIVE_CORRECTION_PASSES", 1)
+    fix = _run(strip_problem(length=50, width=10, e_len=5), 0.25,
+               adaptive=True, monkeypatch=monkeypatch)
+    err_fix = abs(fix.R_ohm / ref.R_ohm - 1)
+    assert err_fix < err_raw / 10
+    assert err_fix < 1e-3
 
 
 def test_plate_with_holes_close(monkeypatch):
@@ -57,7 +75,7 @@ def test_plate_with_holes_close(monkeypatch):
     ref = _run(prob(), 0.1, adaptive=False, monkeypatch=monkeypatch)
     ada = _run(prob(), 0.1, adaptive=True, monkeypatch=monkeypatch)
     assert ada.n_free < 0.5 * ref.n_free
-    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=0.01)
+    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=1e-3)
 
 
 def test_via_chain_exact(monkeypatch):
@@ -112,7 +130,7 @@ def test_1d_trace_bridge(monkeypatch):
 
 def test_buildup_close_on_strip(monkeypatch):
     """Half-coverage buildup strip: buildup cells are pinned fine; the
-    remaining deviation is the interface flux bias of the plain half."""
+    plain half's interface bias is removed by the correction pass."""
     from tests.test_buildup import _with_buildup
 
     def prob():
@@ -121,7 +139,7 @@ def test_buildup_close_on_strip(monkeypatch):
 
     ref = _run(prob(), 0.5, adaptive=False, monkeypatch=monkeypatch)
     ada = _run(prob(), 0.5, adaptive=True, monkeypatch=monkeypatch)
-    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=0.02)
+    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=2e-3)
 
 
 def test_capped_via_close(monkeypatch):
@@ -141,7 +159,7 @@ def test_part_currents_and_ac(monkeypatch):
     p2 = strip_problem(length=50, width=10, e_len=5)
     ada = _run(p2, 0.5, adaptive=True, monkeypatch=monkeypatch,
                parts=True, freq=2e6)
-    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=0.02)
+    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=2e-3)
     assert ada.part_currents1[0][1] == pytest.approx(
         ref.part_currents1[0][1], rel=1e-9)      # single part = full current
     assert ada.rs_ratios == ref.rs_ratios
