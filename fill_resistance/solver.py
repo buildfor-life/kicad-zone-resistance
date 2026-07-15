@@ -117,12 +117,20 @@ def _shifts2d():
 
 def _sigma_2d(stack: RasterStack, li: int, sigma_layer: float,
               sigma_buildup: float) -> np.ndarray | None:
-    """Per-cell sheet conductance for one layer, or None if uniform."""
-    if stack.buildup is None or sigma_buildup <= 0 \
-            or not stack.buildup[li].any():
+    """Per-cell sheet conductance for one layer, or None if uniform.
+    Combines the via-mouth thickness map (cap-thin / partially drilled
+    cells) with the solder-buildup addition."""
+    have_b = (stack.buildup is not None and sigma_buildup > 0
+              and stack.buildup[li].any())
+    have_t = (stack.thick_scale is not None
+              and bool((stack.thick_scale[li] != 1.0).any()))
+    if not have_b and not have_t:
         return None
     s = np.full(stack.shape2d, sigma_layer)
-    s[stack.buildup[li]] += sigma_buildup
+    if have_t:
+        s *= stack.thick_scale[li]
+    if have_b:
+        s[stack.buildup[li]] += sigma_buildup
     return s
 
 

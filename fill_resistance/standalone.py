@@ -39,6 +39,9 @@ def main(argv=None) -> int:
                     default=None, help="contact model (default: config)")
     ap.add_argument("--strip-buildup", action="store_true",
                     help="ignore solder buildup stored in the dump")
+    ap.add_argument("--uncapped", action="store_true",
+                    help="treat vias as uncapped (open drill mouths on "
+                         "all layers)")
     ap.add_argument("--extra-cu-um", type=float, default=None,
                     help="override the added copper in mask openings [um]")
     ap.add_argument("--force-iterative", action="store_true",
@@ -56,6 +59,8 @@ def main(argv=None) -> int:
     problem = load_problem(args.dump)
     if args.strip_buildup:
         problem.buildups = []
+    if args.uncapped:
+        problem.vias_capped = False
     if args.extra_cu_um is not None:
         problem.extra_cu_nm = int(args.extra_cu_um * 1000)
     if args.layers:

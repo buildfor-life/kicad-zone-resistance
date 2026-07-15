@@ -42,6 +42,10 @@ class RasterStack:
                                         # copper only through a 1D trace chain
     chain_edges: tuple | None = None    # (a, b, g_dc, layer) arrays: explicit
                                         # DC conductances of the chain links
+    thick_scale: np.ndarray | None = None   # float (L, ny, nx): per-cell
+                                            # copper-thickness factor (via
+                                            # mouths: cap-thin or partially
+                                            # drilled cells); None = all 1
 
     @property
     def nlayers(self) -> int:
@@ -182,6 +186,10 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
                 # directly, skipping the full-frame temp
                 _paint_ring(stack, poly.outline, True, stack.masks[li])
 
+    # via ring/pad copper BEFORE tracks, so 1D chains see it as regular
+    # copper; drill mouths AFTER tracks, so drills go through trace copper
+    _paint_via_rings(stack, problem)
+
     # traces: wide ones are rasterized from their outline, sub-resolution
     # ones become exact 1D resistor chains along their centerline
     index = {name: li for li, name in enumerate(stack.layer_names)}
@@ -201,6 +209,8 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
               f"{config.TRACK_1D_FACTOR:g} cells modeled as 1D resistor "
               f"chains ({n_links} links)")
 
+    _apply_via_mouths(stack, problem)
+
     if problem.buildups:
         stack.buildup = np.zeros_like(stack.masks)
         index = {name: li for li, name in enumerate(stack.layer_names)}
@@ -216,6 +226,78 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
                 stack.buildup[li] |= pmask
         stack.buildup &= stack.masks        # solder wets exposed copper only
     return stack
+
+
+def _via_span(problem: Problem, via) -> list[int]:
+    return [li for li, layer in enumerate(problem.layers)
+            if via.spans(layer.z_nm)]
+
+
+def _paint_via_rings(stack: RasterStack, problem: Problem) -> None:
+    """Annular-ring / via-pad copper: a full-thickness disc of the pad
+    diameter on every layer the barrel spans (kind='via' only - THT pad
+    copper stays outside the model). The drill mouth re-opens the disc
+    center in _apply_via_mouths."""
+    ny, nx = stack.shape2d
+    h = stack.h_nm
+    for via in problem.vias:
+        if via.kind != "via" or via.pad_nm <= 0:
+            continue
+        r = via.pad_nm / 2.0
+        j0 = max(0, math.floor((via.x - r - stack.x0_nm) / h))
+        j1 = min(nx, math.floor((via.x + r - stack.x0_nm) / h) + 1)
+        i0 = max(0, math.floor((via.y - r - stack.y0_nm) / h))
+        i1 = min(ny, math.floor((via.y + r - stack.y0_nm) / h) + 1)
+        if i0 >= i1 or j0 >= j1:
+            continue
+        xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - via.x
+        ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - via.y
+        disc = (ys[:, None] ** 2 + xs[None, :] ** 2) <= r * r
+        for li in _via_span(problem, via):
+            stack.masks[li, i0:i1, j0:j1] |= disc
+
+
+def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
+    """Drill-mouth treatment, area-weighted per cell (4x4 supersampling):
+    capped vias carry a cap_plating-thin copper cap over the mouth on the
+    OUTER layers, uncapped vias (and inner layers either way) get an open
+    hole. Fully swallowed cells leave the mask; partially covered cells
+    keep a thickness-scaled sheet conductance via stack.thick_scale."""
+    ny, nx = stack.shape2d
+    h = stack.h_nm
+    outer = {li for li, n in enumerate(stack.layer_names)
+             if n in ("F.Cu", "B.Cu")}
+    sub = (np.arange(4) + 0.5) / 4.0
+    for via in problem.vias:
+        if via.kind != "via" or via.drill_nm <= 0:
+            continue
+        r = via.drill_nm / 2.0
+        j0 = max(0, math.floor((via.x - r - stack.x0_nm) / h))
+        j1 = min(nx, math.floor((via.x + r - stack.x0_nm) / h) + 1)
+        i0 = max(0, math.floor((via.y - r - stack.y0_nm) / h))
+        i1 = min(ny, math.floor((via.y + r - stack.y0_nm) / h) + 1)
+        if i0 >= i1 or j0 >= j1:
+            continue
+        xs = stack.x0_nm + (np.arange(j0, j1)[:, None] + sub[None, :]) * h \
+            - via.x
+        ys = stack.y0_nm + (np.arange(i0, i1)[:, None] + sub[None, :]) * h \
+            - via.y
+        cov = ((ys[:, None, :, None] ** 2 + xs[None, :, None, :] ** 2)
+               <= r * r).mean(axis=(2, 3))
+        if not (cov > 0).any():
+            continue                            # mouth far smaller than h
+        if stack.thick_scale is None:
+            stack.thick_scale = np.ones(stack.masks.shape)
+        for li in _via_span(problem, via):
+            if problem.vias_capped and li in outer:
+                ratio = min(problem.cap_plating_nm
+                            / problem.layers[li].thickness_nm, 1.0)
+            else:
+                ratio = 0.0
+            s = 1.0 - cov * (1.0 - ratio)
+            gone = s <= 1e-9
+            stack.masks[li, i0:i1, j0:j1] &= ~gone
+            stack.thick_scale[li, i0:i1, j0:j1] *= np.where(gone, 1.0, s)
 
 
 def _build_chains(stack: RasterStack, problem: Problem,

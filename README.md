@@ -70,18 +70,21 @@ SWIG API. Requires KiCad **10.0.1+**.
   barrel lengths.
 - Via/pad barrels: thin-wall annulus, R = ρ·L/(π·d·t_plating),
   `VIA_PLATING_UM = 18` in `fill_resistance/config.py`. Vias are always
-  plated. **Via capping is not modeled.** Layer-to-layer it cannot
-  matter at DC: the cap (≥15 µm plating per fab spec, thinner than the
-  foil) sits over the hole mouth in parallel with the annular-ring
-  contact, not in series. In-plane, the model treats every via mouth as
-  solid layer-thickness copper (KiCad fills do not subtract the drill),
-  where reality is a hole (uncapped) or the thin cap. The error is
-  bounded by the dilute-hole correction ρ_eff ≈ ρ·(1 + 2f) inside via
-  fields (f = mouth area fraction; 0.3 mm drills on a 1 mm grid give
-  f ≈ 7 % → ≈ +14 % locally), is partially offset by the unmodeled
-  annular-ring copper, and largely vanishes where the current descends
-  into the barrels anyway — typically ≪ a few % of the total R.
-  Per layer a barrel attaches to
+  plated. Each via also contributes its **ring/pad copper** (a
+  full-thickness disc of the pad diameter on every spanned layer) and
+  its **drill mouth**, area-weighted per cell: with the **"vias filled +
+  capped" checkbox** (default on, `VIAS_CAPPED`) the mouth carries a
+  thin copper cap (`CAP_PLATING_UM = 15`, fab spec) on the **outer**
+  layers and is an open hole on inner layers; unchecked, mouths are open
+  holes everywhere. Layer-to-layer the cap never matters at DC (it is in
+  parallel with the annular-ring contact, not in series) — the checkbox
+  only affects in-plane conduction across outer-layer mouths. Sub-cell
+  mouths scale their cells' sheet conductance by the true covered
+  fraction (4×4 supersampling), so coarse grids see the correct small
+  perturbation instead of a whole-cell hole. THT-pad copper and drills
+  remain outside the model; at f > 0 the thickness scaling is applied
+  multiplicatively to the skin-corrected sheet conductance
+  (approximation). Per layer a barrel attaches to
   the fill cell under it, or to the nearest copper cell within the pad
   footprint plus one grid cell — fills joined by **thermal-relief
   spokes** still connect; wider antipads do not, and the barrel bridges

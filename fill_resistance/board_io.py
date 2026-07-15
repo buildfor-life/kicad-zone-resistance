@@ -462,7 +462,8 @@ def build_problem(board: Board, net: str, layer_names: list[str],
                   stackup: StackupInfo, fills: dict,
                   buildups: dict[str, list[Polygon]] | None = None,
                   extra_cu_um: float | None = None,
-                  tracks: dict | None = None) -> Problem:
+                  tracks: dict | None = None,
+                  vias_capped: bool | None = None) -> Problem:
     per_layer = fills.get(net, {})
     per_layer_tracks = (tracks or {}).get(net, {})
     layers = []
@@ -516,6 +517,9 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         extra_cu_nm=int((extra_cu_um if extra_cu_um is not None
                          else config.BUILDUP_EXTRA_CU_UM) * 1000),
         tracks=segs,
+        vias_capped=(vias_capped if vias_capped is not None
+                     else config.VIAS_CAPPED),
+        cap_plating_nm=int(config.CAP_PLATING_UM * 1000),
     )
 
 

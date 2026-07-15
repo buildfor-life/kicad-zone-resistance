@@ -93,7 +93,8 @@ def main() -> None:
                 fills,
                 buildups=(buildups if selection.include_buildup else None),
                 extra_cu_um=selection.extra_cu_um,
-                tracks=(tracks if selection.include_tracks else None))
+                tracks=(tracks if selection.include_tracks else None),
+                vias_capped=selection.vias_capped)
             outdir = report.make_output_dir(board_io.board_dir(board))
         except ApiError as e:
             raise UserFacingError(f"KiCad API error: {e}")

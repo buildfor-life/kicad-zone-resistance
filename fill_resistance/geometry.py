@@ -144,6 +144,9 @@ class Problem:
     solder_rho_ohm_m: float = 1.32e-7
     extra_cu_nm: int = 0
     tracks: list[TrackSeg] = field(default_factory=list)
+    vias_capped: bool = True                  # filled+capped vias: thin cap
+    cap_plating_nm: int = 15_000              # over outer-layer mouths;
+                                              # False = open mouths
 
     @property
     def layer_names(self) -> list[str]:
@@ -359,6 +362,8 @@ def problem_to_json(p: Problem) -> dict:
         "solder_thickness_nm": p.solder_thickness_nm,
         "solder_rho_ohm_m": p.solder_rho_ohm_m,
         "extra_cu_nm": p.extra_cu_nm,
+        "vias_capped": p.vias_capped,
+        "cap_plating_nm": p.cap_plating_nm,
     }
 
 
@@ -430,6 +435,8 @@ def problem_from_json(d: dict) -> Problem:
                      width_nm=int(td["width_nm"]))
             for td in d.get("tracks", [])       # <= v4: baked into polygons
         ],
+        vias_capped=bool(d.get("vias_capped", True)),
+        cap_plating_nm=int(d.get("cap_plating_nm", 15_000)),
     )
 
 

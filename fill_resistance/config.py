@@ -20,13 +20,14 @@ RHO_CU_OHM_M = 1.68e-8          # copper resistivity at 20 degC
 COPPER_THICKNESS_UM: float | None = None  # None -> stackup, fallback 35.0 with warning
 FALLBACK_THICKNESS_UM = 35.0
 TEST_CURRENT_A = 1.0            # default injected current (dialog/CLI-selectable)
-VIA_PLATING_UM = 18.0           # barrel plating thickness (always plated).
-                                # Via capping is NOT modeled: layer-to-layer
-                                # the cap (>=15um per fab spec, thinner than
-                                # the foil) is parallel to the annular-ring
-                                # contact, not in series; in-plane every via
-                                # mouth is treated as solid layer-thickness
-                                # copper (error bound: see README).
+VIA_PLATING_UM = 18.0           # barrel plating thickness (always plated)
+VIAS_CAPPED = True              # filled + capped vias (dialog checkbox):
+                                # outer-layer mouths carry a CAP_PLATING_UM
+                                # thin copper cap, inner-layer mouths are
+                                # holes. False = open mouths on all layers.
+                                # Ring/pad copper of vias is modeled either
+                                # way; THT-pad copper/drills are not.
+CAP_PLATING_UM = 15.0           # cap plating thickness (fab spec)
 INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too
 SKIN_SIDES = 1                  # skin-effect field config: 1 = plane facing a
                                 # return plane (conservative), 2 = isolated foil

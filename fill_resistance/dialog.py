@@ -36,6 +36,7 @@ class Selection:
     include_buildup: bool = False
     extra_cu_um: float = 0.0
     include_tracks: bool = True
+    vias_capped: bool = True
 
 
 class _Dialog(QDialog):
@@ -64,6 +65,12 @@ class _Dialog(QDialog):
                                       "(tracks + arcs)")
         self.tracks_check.setChecked(config.INCLUDE_TRACKS)
         form.addRow("Conductors:", self.tracks_check)
+
+        self.capped_check = QCheckBox(
+            f"vias filled + capped ({config.CAP_PLATING_UM:g} µm cap; "
+            f"off = open mouths)")
+        self.capped_check.setChecked(config.VIAS_CAPPED)
+        form.addRow("Vias:", self.capped_check)
 
         self.contact1_box = QComboBox()
         self.contact2_box = QComboBox()
@@ -206,7 +213,8 @@ class _Dialog(QDialog):
                          contact_model=self.model_box.currentData(),
                          include_buildup=self.buildup_check.isChecked(),
                          extra_cu_um=extra_cu,
-                         include_tracks=self.tracks_check.isChecked())
+                         include_tracks=self.tracks_check.isChecked(),
+                         vias_capped=self.capped_check.isChecked())
 
     def _try_accept(self) -> None:
         try:
