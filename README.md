@@ -1,13 +1,15 @@
 # Fill Resistance — KiCad 10 plugin
 
-Computes the **DC resistance of copper zone fills** between two contacts,
-**single- or multi-layer**: the chosen net's fills on the selected copper
-layers are solved as coupled finite-difference sheets linked by the net's
-**via and through-hole-pad barrels** (18 µm plating, configurable). Shows
-per-layer rasterized maps, potential, current density, and **power
-density**, reports **per-via currents** (via ampacity!) and total
-dissipation at a **selectable test current**. PNGs + a text summary are
-saved per run.
+Computes the **DC or AC resistance of copper zone fills** between two
+contacts, **single- or multi-layer**: the chosen net's fills on the
+selected copper layers are solved as coupled finite-difference sheets
+linked by the net's **via and through-hole-pad barrels** (18 µm plating,
+configurable). At a user-set **frequency** the exact 1D foil/barrel
+skin-effect correction is applied (AC results are a rigorous lower
+bound — see *Model & limits*). Shows per-layer rasterized maps,
+potential, current density, and **power density**, reports **per-via
+currents** (via ampacity!) and total dissipation at a **selectable test
+current**. PNGs + a text summary are saved per run.
 
 Uses the KiCad **IPC API** (`kicad-python` / `kipy`), not the deprecated
 SWIG API. Requires KiCad **10.0.1+**.
