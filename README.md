@@ -2,9 +2,9 @@
 
 Computes the **DC or AC resistance of copper zone fills and traces**
 between two contacts, **single- or multi-layer**: the chosen net's fills
-and tracks on the selected copper layers are solved as coupled
-finite-difference sheets linked by the net's **via and through-hole-pad
-barrels** (18 µm plating, configurable). At a user-set **frequency** the exact 1D foil/barrel
+(teardrops included) and tracks on the selected copper layers are
+solved as coupled finite-difference sheets linked by the net's **via
+and through-hole-pad barrels** (18 µm plating, configurable). At a user-set **frequency** the exact 1D foil/barrel
 skin-effect correction is applied (AC results are a rigorous lower
 bound — see *Model & limits*). Shows per-layer rasterized maps,
 potential, current density, and **power density**, reports **per-via
@@ -96,8 +96,9 @@ SWIG API. Requires KiCad **10.0.1+**.
   `TRACK_1D_FACTOR` (3) grid cells are modeled as exact **1D resistor
   chains** along their centerline — true arc length per link, so their
   series resistance carries no discretization error and no cell-size
-  tuning is needed for thin traces. 1D-modeled traces show potential and
-  power density but no |J| field. Pad copper other than the selected
+  tuning is needed for thin traces. 1D-modeled traces show potential,
+  power density, and |J| (the true in-trace density from the link
+  currents, |ΔV|/(ρ·Δl)). Pad copper other than the selected
   contacts is still **not** part of the conductor model.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
   default**; `INCLUDE_MASK_BUILDUP`): zones drawn on `F.Mask`/`B.Mask`
@@ -131,7 +132,10 @@ SWIG API. Requires KiCad **10.0.1+**.
   and is not captured — since the resistance-driven distribution is the
   minimum-dissipation one, AC results are a rigorous **lower bound**.
   Rule of thumb for 70 µm foil: skin is negligible below ~300 kHz
-  (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz.
+  (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz. At f > 0 the |J| maps are
+  referenced to the skin-reduced conduction-equivalent thickness
+  t/(R_AC/R_DC) — the density in the copper that actually conducts —
+  not the geometric foil thickness.
 - 5-point FDM per layer on an auto-sized shared grid (~2 M fine cells
   with the uniform grid; ~8 M with the adaptive grid, whose unknown
   count no longer scales with them). Direct sparse solve up to 500 k
