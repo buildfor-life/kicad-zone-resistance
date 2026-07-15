@@ -39,6 +39,9 @@ BUILDUP_EXTRA_CU_UM = 0.0       # optional user-added copper (busbar/wire
                                 # soldered into the opening); dialog-settable
 
 # --- Zone / layer selection ---
+INCLUDE_TRACKS = True           # the net's traces (straight + arc tracks)
+                                # conduct together with the zone fills;
+                                # dialog-toggleable
 LAYER_HINT: str | None = None   # e.g. "F.Cu" to disambiguate candidate fills
 ELECTRODE_POS_LAYER = "User.1"  # rectangles on this layer mark V+ contact parts
 ELECTRODE_NEG_LAYER = "User.2"  # rectangles on this layer mark V- contact parts

@@ -37,7 +37,9 @@ def main() -> None:
             if board_io.any_zone_unfilled(board) or config.ALWAYS_REFILL:
                 board_io.refill(board)
             fills = board_io.gather_net_fills(board)
-            candidate_nets = board_io.nets_overlapping(fills, es1, es2)
+            tracks = board_io.gather_net_tracks(board)
+            copper = board_io.merge_copper(fills, tracks)
+            candidate_nets = board_io.nets_overlapping(copper, es1, es2)
             buildups = board_io.gather_mask_buildups(board)
         except ApiError as e:
             raise UserFacingError(
@@ -47,9 +49,9 @@ def main() -> None:
 
         if not candidate_nets:
             raise CandidateError(
-                "No copper zone fill overlaps both contacts. Check that both "
-                "sit over (or in) filled pours and that the fills are up to "
-                "date (press B in the board editor)."
+                "No copper (zone fill or trace) overlaps both contacts. "
+                "Check that both sit over copper of the same net and that "
+                "the fills are up to date (press B in the board editor)."
             )
 
         def group_label(parts):
@@ -64,7 +66,7 @@ def main() -> None:
         default_net = (net_hint if net_hint in candidate_nets
                        else candidate_nets[0])
         selection = dialog.ask(
-            candidates={n: list(fills[n].keys()) for n in candidate_nets},
+            candidates={n: list(copper[n].keys()) for n in candidate_nets},
             layer_order=stackup.names,
             default_net=default_net,
             e1_label=group_label(es1), e2_label=group_label(es2),
@@ -89,7 +91,8 @@ def main() -> None:
                 board, selection.net, selection.layers, es1, es2, stackup,
                 fills,
                 buildups=(buildups if selection.include_buildup else None),
-                extra_cu_um=selection.extra_cu_um)
+                extra_cu_um=selection.extra_cu_um,
+                tracks=(tracks if selection.include_tracks else None))
             outdir = report.make_output_dir(board_io.board_dir(board))
         except ApiError as e:
             raise UserFacingError(f"KiCad API error: {e}")

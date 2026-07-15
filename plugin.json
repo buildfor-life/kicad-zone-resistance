@@ -2,7 +2,7 @@
     "$schema": "https://go.kicad.org/api/schemas/v1",
     "identifier": "th.co.b4l.fill-resistance",
     "name": "Fill Resistance",
-    "description": "DC/AC resistance of copper zone fills between two contacts (marker rectangles or pads), single- or multi-layer with via coupling",
+    "description": "DC/AC resistance of copper zone fills and traces between two contacts (marker rectangles or pads), single- or multi-layer with via coupling",
     "runtime": {
         "type": "python"
     },

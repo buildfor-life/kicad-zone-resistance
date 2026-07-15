@@ -132,10 +132,9 @@ class Problem:
         return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
-def arc_points(start, mid, end, tol_nm: float) -> np.ndarray:
-    """Tessellate a start/mid/end arc into points from start (inclusive)
-    to end (exclusive), max sagitta <= tol_nm. Collinear input degrades
-    to just the start point (straight segment)."""
+def _arc_params(start, mid, end) -> tuple[float, float, float, float, float] | None:
+    """Circle through three points: (cx, cy, r, a0, sweep) with a0 the
+    start angle and sweep signed; None if the points are collinear."""
     sx, sy = float(start[0]), float(start[1])
     mx, my = float(mid[0]), float(mid[1])
     ex, ey = float(end[0]), float(end[1])
@@ -143,28 +142,107 @@ def arc_points(start, mid, end, tol_nm: float) -> np.ndarray:
     d = 2.0 * (sx * (my - ey) + mx * (ey - sy) + ex * (sy - my))
     chord = math.hypot(ex - sx, ey - sy)
     if abs(d) < 1e-9 * max(chord, 1.0):
-        return np.array([[start[0], start[1]]], dtype=np.int64)
-    ux = ((sx**2 + sy**2) * (my - ey) + (mx**2 + my**2) * (ey - sy)
+        return None
+    cx = ((sx**2 + sy**2) * (my - ey) + (mx**2 + my**2) * (ey - sy)
           + (ex**2 + ey**2) * (sy - my)) / d
-    uy = ((sx**2 + sy**2) * (ex - mx) + (mx**2 + my**2) * (sx - ex)
+    cy = ((sx**2 + sy**2) * (ex - mx) + (mx**2 + my**2) * (sx - ex)
           + (ex**2 + ey**2) * (mx - sx)) / d
-    r = math.hypot(sx - ux, sy - uy)
+    r = math.hypot(sx - cx, sy - cy)
 
-    a0 = math.atan2(sy - uy, sx - ux)
-    a1 = math.atan2(my - uy, mx - ux)
-    a2 = math.atan2(ey - uy, ex - ux)
+    a0 = math.atan2(sy - cy, sx - cx)
+    a1 = math.atan2(my - cy, mx - cx)
+    a2 = math.atan2(ey - cy, ex - cx)
     two_pi = 2.0 * math.pi
     d01 = (a1 - a0) % two_pi
     d02 = (a2 - a0) % two_pi
     sweep = d02 if d01 <= d02 else d02 - two_pi
+    return cx, cy, r, a0, sweep
 
+
+def _n_arc_segments(sweep_abs: float, r: float, tol_nm: float) -> int:
+    """Segments needed to keep the sagitta of each chord <= tol_nm."""
     tol = min(tol_nm, 0.999 * r)
     dtheta_max = 2.0 * math.acos(1.0 - tol / r)
-    n = max(2, int(math.ceil(abs(sweep) / dtheta_max)))
+    return max(2, int(math.ceil(sweep_abs / dtheta_max)))
+
+
+def arc_points(start, mid, end, tol_nm: float) -> np.ndarray:
+    """Tessellate a start/mid/end arc into points from start (inclusive)
+    to end (exclusive), max sagitta <= tol_nm. Collinear input degrades
+    to just the start point (straight segment)."""
+    params = _arc_params(start, mid, end)
+    if params is None:
+        return np.array([[start[0], start[1]]], dtype=np.int64)
+    cx, cy, r, a0, sweep = params
+    n = _n_arc_segments(abs(sweep), r, tol_nm)
     ks = np.arange(n)
     angs = a0 + sweep * ks / n
-    pts = np.stack([ux + r * np.cos(angs), uy + r * np.sin(angs)], axis=1)
+    pts = np.stack([cx + r * np.cos(angs), cy + r * np.sin(angs)], axis=1)
     return np.round(pts).astype(np.int64)
+
+
+def capsule_ring(x1: int, y1: int, x2: int, y2: int, width_nm: int,
+                 tol_nm: float) -> np.ndarray:
+    """Outline (open ring, int64 nm) of a straight track segment: a
+    rectangle with semicircular end caps; a circle for a zero-length
+    segment. Cap sagitta <= tol_nm."""
+    r = width_nm / 2.0
+    dx, dy = float(x2 - x1), float(y2 - y1)
+    length = math.hypot(dx, dy)
+    n = _n_arc_segments(math.pi, r, tol_nm)
+    if length < 1.0:
+        angs = np.linspace(0.0, 2.0 * math.pi, 2 * n, endpoint=False)
+        pts = np.stack([x1 + r * np.cos(angs), y1 + r * np.sin(angs)],
+                       axis=1)
+        return np.round(pts).astype(np.int64)
+    ux, uy = dx / length, dy / length
+    a0 = math.atan2(ux, -uy)                  # angle of the left normal
+    ks = np.arange(n + 1)
+    cap2 = a0 - ks * math.pi / n              # +normal -> -normal, around end
+    cap1 = a0 - (ks + n) * math.pi / n        # -normal -> +normal, around start
+    pts = np.concatenate([
+        np.stack([x2 + r * np.cos(cap2), y2 + r * np.sin(cap2)], axis=1),
+        np.stack([x1 + r * np.cos(cap1), y1 + r * np.sin(cap1)], axis=1),
+    ])
+    return np.round(pts).astype(np.int64)
+
+
+def arc_band_ring(start, mid, end, width_nm: int, tol_nm: float) -> np.ndarray:
+    """Outline of an arc track: the annular band of the given width
+    around the start/mid/end centerline, with semicircular end caps.
+    Collinear input degrades to the straight capsule."""
+    params = _arc_params(start, mid, end)
+    if params is None:
+        return capsule_ring(start[0], start[1], end[0], end[1], width_nm,
+                            tol_nm)
+    cx, cy, r, a0, sweep = params
+    w2 = width_nm / 2.0
+    router = r + w2
+    rinner = max(r - w2, 0.0)
+    sgn = 1.0 if sweep >= 0 else -1.0
+    a1 = a0 + sweep
+    m = _n_arc_segments(abs(sweep), router, tol_nm)
+    ncap = _n_arc_segments(math.pi, w2, tol_nm)
+    ks = np.arange(m + 1)
+
+    th = a0 + sweep * ks / m                  # outer arc, start -> end
+    parts = [np.stack([cx + router * np.cos(th),
+                       cy + router * np.sin(th)], axis=1)]
+    ex_, ey_ = cx + r * math.cos(a1), cy + r * math.sin(a1)
+    ca = a1 + sgn * math.pi * np.arange(1, ncap) / ncap   # end cap, bulges
+    parts.append(np.stack([ex_ + w2 * np.cos(ca),        # along exit tangent
+                           ey_ + w2 * np.sin(ca)], axis=1))
+    if rinner > 0:
+        th = a1 - sweep * ks / m              # inner arc, end -> start
+        parts.append(np.stack([cx + rinner * np.cos(th),
+                               cy + rinner * np.sin(th)], axis=1))
+    else:
+        parts.append(np.array([[cx, cy]]))    # band swallows the center
+    sx_, sy_ = cx + r * math.cos(a0), cy + r * math.sin(a0)
+    ca = a0 + math.pi + sgn * math.pi * np.arange(1, ncap) / ncap
+    parts.append(np.stack([sx_ + w2 * np.cos(ca),        # start cap, bulges
+                           sy_ + w2 * np.sin(ca)], axis=1))  # backwards
+    return np.round(np.concatenate(parts)).astype(np.int64)
 
 
 def linearize_ring(nodes: list, tol_nm: float) -> np.ndarray:

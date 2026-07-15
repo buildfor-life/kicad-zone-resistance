@@ -11,7 +11,7 @@ from pathlib import Path
 
 from kipy import KiCad
 from kipy.board import Board
-from kipy.board_types import BoardRectangle, Pad
+from kipy.board_types import ArcTrack, BoardRectangle, Pad
 from kipy.proto.board.board_pb2 import BoardStackupLayerType
 from kipy.proto.board.board_types_pb2 import ZoneType
 from kipy.util.board_layer import (canonical_name, is_copper_layer,
@@ -20,7 +20,8 @@ from kipy.util.board_layer import (canonical_name, is_copper_layer,
 from . import config
 from .errors import ApiVersionError, CandidateError, SelectionError
 from .geometry import (Electrode, LayerFill, Polygon, Problem, Rect,
-                       SurfaceBuildup, ViaLink, linearize_ring)
+                       SurfaceBuildup, ViaLink, arc_band_ring, capsule_ring,
+                       linearize_ring)
 
 MASK_TO_COPPER = {"F.Mask": "F.Cu", "B.Mask": "B.Cu"}
 
@@ -302,6 +303,39 @@ def gather_net_fills(board: Board) -> dict[str, dict[str, list[Polygon]]]:
     return fills
 
 
+def gather_net_tracks(board: Board) -> dict[str, dict[str, list[Polygon]]]:
+    """net -> layer -> track outline polygons (straight capsules and arc
+    bands). Traces conduct together with the zone fills."""
+    out: dict[str, dict[str, list[Polygon]]] = {}
+    for t in board.get_tracks():
+        if not is_copper_layer(t.layer):
+            continue
+        width = int(t.width or 0)
+        if width <= 0:
+            continue
+        if isinstance(t, ArcTrack):
+            ring = arc_band_ring((t.start.x, t.start.y), (t.mid.x, t.mid.y),
+                                 (t.end.x, t.end.y), width, ARC_TOL_NM)
+        else:
+            ring = capsule_ring(t.start.x, t.start.y, t.end.x, t.end.y,
+                                width, ARC_TOL_NM)
+        net = t.net.name if t.net is not None else "<no net>"
+        out.setdefault(net, {}).setdefault(
+            canonical_name(t.layer), []).append(Polygon(outline=ring))
+    return out
+
+
+def merge_copper(fills: dict, tracks: dict) -> dict:
+    """net -> layer -> fill + track polygons, for candidate detection
+    and the dialog's layer lists (build_problem merges the same way)."""
+    out: dict[str, dict[str, list[Polygon]]] = {}
+    for src in (fills, tracks):
+        for net, per_layer in src.items():
+            for layer, polys in per_layer.items():
+                out.setdefault(net, {}).setdefault(layer, []).extend(polys)
+    return out
+
+
 def _rect_overlaps(rect: Rect, polygons: list[Polygon]) -> bool:
     for p in polygons:
         px0, py0 = p.outline.min(axis=0)
@@ -413,15 +447,18 @@ def build_problem(board: Board, net: str, layer_names: list[str],
                   es1: list[Electrode], es2: list[Electrode],
                   stackup: StackupInfo, fills: dict,
                   buildups: dict[str, list[Polygon]] | None = None,
-                  extra_cu_um: float | None = None) -> Problem:
+                  extra_cu_um: float | None = None,
+                  tracks: dict | None = None) -> Problem:
     per_layer = fills.get(net, {})
+    per_layer_tracks = (tracks or {}).get(net, {})
     layers = []
     for name in stackup.names:                 # keep stackup order
         if name not in layer_names:
             continue
-        polys = per_layer.get(name, [])
+        polys = (list(per_layer.get(name, []))
+                 + list(per_layer_tracks.get(name, [])))
         if not polys:
-            print(f"note: net {net} has no fill on {name} - layer skipped")
+            print(f"note: net {net} has no copper on {name} - layer skipped")
             continue
         if config.COPPER_THICKNESS_UM is not None:
             t = int(config.COPPER_THICKNESS_UM * 1000)
@@ -440,9 +477,10 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         SurfaceBuildup(layer_name=name, polygons=polys)
         for name, polys in (buildups or {}).items() if name in included
     ]
+    n_tracks = sum(len(per_layer_tracks.get(name, [])) for name in included)
     print(f"net {net}: {len(layers)} layer(s) "
           f"({', '.join(l.layer_name for l in layers)}), "
-          f"{len(vias)} via/pad barrel(s)"
+          f"{n_tracks} track(s), {len(vias)} via/pad barrel(s)"
           + (f", solder buildup on "
              f"{', '.join(b.layer_name for b in buildup_list)}"
              if buildup_list else ""))
@@ -477,7 +515,9 @@ if __name__ == "__main__":
     if any_zone_unfilled(board):
         refill(board)
     fills = gather_net_fills(board)
-    nets = nets_overlapping(fills, es1, es2)
+    tracks = gather_net_tracks(board) if config.INCLUDE_TRACKS else {}
+    copper = merge_copper(fills, tracks)
+    nets = nets_overlapping(copper, es1, es2)
     if len(sys.argv) > 2:
         net = sys.argv[2]
     elif net_hint in nets:
@@ -487,7 +527,7 @@ if __name__ == "__main__":
     else:
         print(f"candidate nets: {nets}; pass one as second argument")
         sys.exit(1)
-    problem = build_problem(board, net, list(fills.get(net, {})), es1, es2,
-                            stackup, fills)
+    problem = build_problem(board, net, list(copper.get(net, {})), es1, es2,
+                            stackup, fills, tracks=tracks)
     save_problem(problem, out)
     print(f"wrote {out}")

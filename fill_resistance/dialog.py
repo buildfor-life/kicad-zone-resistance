@@ -35,6 +35,7 @@ class Selection:
     contact_model: str = "uniform"
     include_buildup: bool = False
     extra_cu_um: float = 0.0
+    include_tracks: bool = True
 
 
 class _Dialog(QDialog):
@@ -58,6 +59,11 @@ class _Dialog(QDialog):
         self.layer_list = QListWidget()
         self.layer_list.setMaximumHeight(120)
         form.addRow("Layers:", self.layer_list)
+
+        self.tracks_check = QCheckBox("include the net's traces "
+                                      "(tracks + arcs)")
+        self.tracks_check.setChecked(config.INCLUDE_TRACKS)
+        form.addRow("Conductors:", self.tracks_check)
 
         self.contact1_box = QComboBox()
         self.contact2_box = QComboBox()
@@ -199,7 +205,8 @@ class _Dialog(QDialog):
                          freq_hz=freq,
                          contact_model=self.model_box.currentData(),
                          include_buildup=self.buildup_check.isChecked(),
-                         extra_cu_um=extra_cu)
+                         extra_cu_um=extra_cu,
+                         include_tracks=self.tracks_check.isChecked())
 
     def _try_accept(self) -> None:
         try:

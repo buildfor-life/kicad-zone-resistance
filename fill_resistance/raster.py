@@ -167,11 +167,16 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
     )
     for li, layer in enumerate(problem.layers):
         for poly in layer.polygons:
-            pmask = np.zeros((ny, nx), dtype=bool)
-            _paint_ring(stack, poly.outline, True, pmask)
-            for hole in poly.holes:
-                _paint_ring(stack, hole, False, pmask)
-            stack.masks[li] |= pmask
+            if poly.holes:
+                pmask = np.zeros((ny, nx), dtype=bool)
+                _paint_ring(stack, poly.outline, True, pmask)
+                for hole in poly.holes:
+                    _paint_ring(stack, hole, False, pmask)
+                stack.masks[li] |= pmask
+            else:
+                # hole-less (e.g. one of many track outlines): paint the
+                # layer mask directly, skipping the full-frame temp
+                _paint_ring(stack, poly.outline, True, stack.masks[li])
 
     if problem.buildups:
         stack.buildup = np.zeros_like(stack.masks)

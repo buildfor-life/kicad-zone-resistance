@@ -1,10 +1,10 @@
 # Fill Resistance — KiCad 10 plugin
 
-Computes the **DC or AC resistance of copper zone fills** between two
-contacts, **single- or multi-layer**: the chosen net's fills on the
-selected copper layers are solved as coupled finite-difference sheets
-linked by the net's **via and through-hole-pad barrels** (18 µm plating,
-configurable). At a user-set **frequency** the exact 1D foil/barrel
+Computes the **DC or AC resistance of copper zone fills and traces**
+between two contacts, **single- or multi-layer**: the chosen net's fills
+and tracks on the selected copper layers are solved as coupled
+finite-difference sheets linked by the net's **via and through-hole-pad
+barrels** (18 µm plating, configurable). At a user-set **frequency** the exact 1D foil/barrel
 skin-effect correction is applied (AC results are a rigorous lower
 bound — see *Model & limits*). Shows per-layer rasterized maps,
 potential, current density, and **power density**, reports **per-via
@@ -78,8 +78,10 @@ SWIG API. Requires KiCad **10.0.1+**.
   spokes** still connect; wider antipads do not, and the barrel bridges
   the layers above/below with the full barrel length. Barrels that reach
   fill on fewer than two layers carry no current and are reported.
-- Tracks and pad copper (other than the selected contacts) are **not**
-  part of the conductor model — zone fills + barrels only.
+- The net's **traces** (straight and arc tracks, exact outline polygons
+  incl. rounded ends) conduct together with the fills — dialog checkbox,
+  on by default (`INCLUDE_TRACKS`). Pad copper other than the selected
+  contacts is still **not** part of the conductor model.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
   default**; `INCLUDE_MASK_BUILDUP`): zones drawn on `F.Mask`/`B.Mask`
   are treated as mask openings that collect `SOLDER_THICKNESS_UM`
