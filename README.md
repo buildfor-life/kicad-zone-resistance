@@ -70,9 +70,18 @@ SWIG API. Requires KiCad **10.0.1+**.
   barrel lengths.
 - Via/pad barrels: thin-wall annulus, R = ρ·L/(π·d·t_plating),
   `VIA_PLATING_UM = 18` in `fill_resistance/config.py`. Vias are always
-  plated; capped vs uncapped does not change the layer-to-layer DC path
-  (the ≥5 µm cap sits over the hole mouth in parallel with the
-  annular-ring contact, not in series). Per layer a barrel attaches to
+  plated. **Via capping is not modeled.** Layer-to-layer it cannot
+  matter at DC: the cap (≥15 µm plating per fab spec, thinner than the
+  foil) sits over the hole mouth in parallel with the annular-ring
+  contact, not in series. In-plane, the model treats every via mouth as
+  solid layer-thickness copper (KiCad fills do not subtract the drill),
+  where reality is a hole (uncapped) or the thin cap. The error is
+  bounded by the dilute-hole correction ρ_eff ≈ ρ·(1 + 2f) inside via
+  fields (f = mouth area fraction; 0.3 mm drills on a 1 mm grid give
+  f ≈ 7 % → ≈ +14 % locally), is partially offset by the unmodeled
+  annular-ring copper, and largely vanishes where the current descends
+  into the barrels anyway — typically ≪ a few % of the total R.
+  Per layer a barrel attaches to
   the fill cell under it, or to the nearest copper cell within the pad
   footprint plus one grid cell — fills joined by **thermal-relief
   spokes** still connect; wider antipads do not, and the barrel bridges

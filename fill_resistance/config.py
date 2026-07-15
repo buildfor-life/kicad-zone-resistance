@@ -21,10 +21,12 @@ COPPER_THICKNESS_UM: float | None = None  # None -> stackup, fallback 35.0 with 
 FALLBACK_THICKNESS_UM = 35.0
 TEST_CURRENT_A = 1.0            # default injected current (dialog/CLI-selectable)
 VIA_PLATING_UM = 18.0           # barrel plating thickness (always plated).
-                                # Capped vs uncapped vias do not change the
-                                # layer-to-layer DC path: the >=5um cap sits
-                                # over the hole mouth in parallel with the
-                                # annular-ring contact, not in series.
+                                # Via capping is NOT modeled: layer-to-layer
+                                # the cap (>=15um per fab spec, thinner than
+                                # the foil) is parallel to the annular-ring
+                                # contact, not in series; in-plane every via
+                                # mouth is treated as solid layer-thickness
+                                # copper (error bound: see README).
 INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too
 SKIN_SIDES = 1                  # skin-effect field config: 1 = plane facing a
                                 # return plane (conservative), 2 = isolated foil
