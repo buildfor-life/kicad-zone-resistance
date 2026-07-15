@@ -16,6 +16,7 @@ from pathlib import Path
 from . import config, pipeline
 from .errors import UserFacingError
 from .geometry import load_problem
+from .skin import parse_frequency
 
 
 def main(argv=None) -> int:
@@ -23,7 +24,7 @@ def main(argv=None) -> int:
     ap.add_argument("dump", type=Path, help="geometry_dump.json from a plugin run")
     ap.add_argument("--current", type=float, default=None,
                     help="test current [A] (default: config TEST_CURRENT_A)")
-    ap.add_argument("--freq", type=str, default="0",
+    ap.add_argument("--freq", type=parse_frequency, default=0.0,
                     help="frequency, e.g. 142k or 1.5M (default: DC). "
                          "AC results are a lower bound (skin per foil only)")
     ap.add_argument("--cell-um", type=float, default=None,
@@ -64,11 +65,10 @@ def main(argv=None) -> int:
                   file=sys.stderr)
             return 1
 
-    from .skin import parse_frequency
     outdir = args.out if args.out is not None else args.dump.parent
     try:
         pipeline.run(problem, outdir, show=not args.no_show,
-                     i_test=args.current, freq_hz=parse_frequency(args.freq),
+                     i_test=args.current, freq_hz=args.freq,
                      contact_model=args.contact_model)
     except UserFacingError as e:
         print(f"ERROR: {e}", file=sys.stderr)

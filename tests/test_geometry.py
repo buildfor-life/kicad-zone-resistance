@@ -51,6 +51,7 @@ def test_problem_json_roundtrip_v2(tmp_path):
          [([(0, 0), (10, 0), (10, 1), (0, 1)], [])]],
         rect1_mm=(0, 0, 1, 1), rect2_mm=(9, 0, 10, 1),
         contact1="L0", contact2="L1", vias_mm=[(5.5, 0.5)])
+    p.vias[0].pad_nm = 600_000
     f = tmp_path / "dump.json"
     save_problem(p, f)
     q = load_problem(f)
@@ -58,6 +59,7 @@ def test_problem_json_roundtrip_v2(tmp_path):
     assert q.electrodes1[0].contact == "L0"
     assert q.electrodes2[0].contact == "L1"
     assert len(q.vias) == 1 and q.vias[0].drill_nm == p.vias[0].drill_nm
+    assert q.vias[0].pad_nm == 600_000
     assert q.plating_nm == p.plating_nm
     assert np.array_equal(q.layers[0].polygons[0].outline,
                           p.layers[0].polygons[0].outline)

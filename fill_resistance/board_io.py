@@ -355,6 +355,17 @@ def refill(board: Board) -> None:
 
 # --- barrels -----------------------------------------------------------------
 
+def _padstack_pad_nm(item) -> int:
+    """Largest copper pad diameter of a via/pad padstack; 0 if unknown.
+    Used to bound the barrel-to-fill connection search in the solver."""
+    try:
+        sizes = [max(int(l.size.x), int(l.size.y))
+                 for l in item.padstack.copper_layers]
+        return max(sizes) if sizes else 0
+    except Exception:
+        return 0
+
+
 def _padstack_span(padstack, stackup: StackupInfo) -> tuple[int, int]:
     """(z_top, z_bot) of the barrel; falls back to the full stack."""
     try:
@@ -380,7 +391,8 @@ def gather_barrels(board: Board, net_name: str,
         z_top, z_bot = _padstack_span(via.padstack, stackup)
         barrels.append(ViaLink(x=via.position.x, y=via.position.y,
                                drill_nm=drill, z_top_nm=z_top,
-                               z_bot_nm=z_bot, kind="via"))
+                               z_bot_nm=z_bot, kind="via",
+                               pad_nm=_padstack_pad_nm(via)))
     if config.INCLUDE_TH_PADS:
         for pad in board.get_pads():
             if pad.net is None or pad.net.name != net_name:
@@ -390,7 +402,8 @@ def gather_barrels(board: Board, net_name: str,
                 continue
             barrels.append(ViaLink(x=pad.position.x, y=pad.position.y,
                                    drill_nm=drill, z_top_nm=-1,
-                                   z_bot_nm=stackup.z_bot_nm + 1, kind="pad"))
+                                   z_bot_nm=stackup.z_bot_nm + 1, kind="pad",
+                                   pad_nm=_padstack_pad_nm(pad)))
     return barrels
 
 
@@ -411,9 +424,9 @@ def build_problem(board: Board, net: str, layer_names: list[str],
             print(f"note: net {net} has no fill on {name} - layer skipped")
             continue
         if config.COPPER_THICKNESS_UM is not None:
-            t, source = int(config.COPPER_THICKNESS_UM * 1000), "override"
+            t = int(config.COPPER_THICKNESS_UM * 1000)
         else:
-            t, source = stackup.thickness_nm[name], "stackup"
+            t = stackup.thickness_nm[name]
         layers.append(LayerFill(layer_name=name, thickness_nm=t,
                                 z_nm=stackup.z_nm[name], polygons=polys))
     if not layers:

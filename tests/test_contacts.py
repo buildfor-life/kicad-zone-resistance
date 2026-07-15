@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 
 from fill_resistance import raster, solver
-from fill_resistance.errors import ElectrodeError
+from fill_resistance.errors import ConnectivityError, ElectrodeError
 from fill_resistance.geometry import Electrode
-from tests.util import NM, make_problem, rect_mm, sigma_s, strip_problem
+from tests.util import (NM, make_multilayer, make_problem, rect_mm, sigma_s,
+                        strip_problem)
 
 
 def _solve(problem, h_mm, model, i_test=1.0):
@@ -159,6 +160,22 @@ def test_injection_area_partition_first_wins():
     res, _ = _solve(p, 0.25, "uniform", i_test=1.0)
     total = sum(a for _, a in res.part_currents1)
     assert total == pytest.approx(1.0, rel=1e-12)
+
+
+def test_uniform_multicomponent_raises():
+    """Two disconnected sheets that each touch both terminals: the
+    uniform model would build a singular system (one ground cell, pure-
+    Neumann second component) and previously returned garbage silently
+    (e.g. negative gigaohms). It must refuse; equipotential handles it."""
+    strip1 = [(0, 0), (10, 0), (10, 1), (0, 1)]
+    strip2 = [(0, 0), (10, 0), (10, 2), (0, 2)]   # asymmetric shares
+    p = make_multilayer([[(strip1, [])], [(strip2, [])]],
+                        (0, 0, 1, 2), (9, 0, 10, 1))  # contact 'all', no vias
+    with pytest.raises(ConnectivityError, match="disconnected"):
+        _solve(p, 1.0, "uniform")
+    res, _ = _solve(p, 1.0, "equipotential")
+    assert np.isfinite(res.R_ohm) and res.R_ohm > 0
+    assert res.power_balance_rel < 1e-9
 
 
 def test_touching_ok_uniform_error_equipotential():

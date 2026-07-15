@@ -112,6 +112,17 @@ def test_test_current_scaling():
     assert r10.P_total == pytest.approx(100 * r1.P_total, rel=1e-9)
 
 
+def test_nonpositive_test_current_rejected():
+    """i_test <= 0 would divide by zero in the percentage reporting;
+    it must be rejected up front with a clean user-facing message."""
+    from fill_resistance import pipeline
+    from fill_resistance.errors import UserFacingError
+    p = strip_problem()
+    for bad in (0.0, -1.0):
+        with pytest.raises(UserFacingError, match="Test current"):
+            pipeline.run(p, None, show=False, i_test=bad)
+
+
 def test_power_identity():
     """Sum of edge powers equals I^2 R exactly for the direct solve."""
     p = make_problem(

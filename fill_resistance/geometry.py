@@ -87,6 +87,7 @@ class ViaLink:
     z_top_nm: int
     z_bot_nm: int
     kind: str = "via"                         # "via" | "pad"
+    pad_nm: int = 0                           # pad/annular diameter; 0 = unknown
 
     def spans(self, z_nm: int) -> bool:
         return self.z_top_nm - 1 <= z_nm <= self.z_bot_nm + 1
@@ -287,7 +288,8 @@ def problem_from_json(d: dict) -> Problem:
         vias=[
             ViaLink(x=int(vd["x"]), y=int(vd["y"]), drill_nm=int(vd["drill_nm"]),
                     z_top_nm=int(vd["z_top_nm"]), z_bot_nm=int(vd["z_bot_nm"]),
-                    kind=vd.get("kind", "via"))
+                    kind=vd.get("kind", "via"),
+                    pad_nm=int(vd.get("pad_nm", 0)))
             for vd in d["vias"]
         ],
         electrodes1=(

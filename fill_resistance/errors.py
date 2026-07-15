@@ -32,3 +32,7 @@ class ConnectivityError(UserFacingError):
 
 class GridSizeError(UserFacingError):
     pass
+
+
+class SolverError(UserFacingError):
+    pass

@@ -90,6 +90,14 @@ def test_hard_max_cells_guard(monkeypatch):
         raster.choose_cell_size(p.copper_bbox(), len(p.layers))
 
 
+def test_cell_override_nonpositive_raises(monkeypatch):
+    p = strip_problem()
+    for bad in (0.0, -50.0):
+        monkeypatch.setattr(config, "CELL_UM_OVERRIDE", bad)
+        with pytest.raises(GridSizeError, match="positive"):
+            raster.choose_cell_size(p.copper_bbox(), len(p.layers))
+
+
 def test_auto_cell_size_hits_target():
     # large plane: unclamped regime, cell count tracks TARGET_CELLS
     p = strip_problem(length=200, width=100, e_len=5)

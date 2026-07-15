@@ -59,7 +59,9 @@ def resistance_factor(thickness_m: float, freq_hz: float,
 
 
 def parse_frequency(text: str) -> float:
-    """'0', '100k', '1.5M', '142500' -> Hz. Empty/invalid -> 0 (DC)."""
+    """'0', '100k', '1.5M', '142500' -> Hz; empty -> 0 (DC).
+    Raises ValueError on unparseable or negative input (a typo silently
+    becoming DC would mislabel the result)."""
     t = text.strip().lower().replace(",", ".").removesuffix("hz").strip()
     if not t:
         return 0.0
@@ -72,7 +74,7 @@ def parse_frequency(text: str) -> float:
         mult, t = 1e3, t[:-1]
     elif t.endswith("g"):
         mult, t = 1e9, t[:-1]
-    try:
-        return max(0.0, float(t) * mult)
-    except ValueError:
-        return 0.0
+    value = float(t) * mult          # ValueError on garbage
+    if value < 0:
+        raise ValueError(f"negative frequency: {text!r}")
+    return value

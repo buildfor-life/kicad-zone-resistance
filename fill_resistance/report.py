@@ -102,8 +102,11 @@ def write_summary(outdir: Path, problem: Problem, stack: RasterStack,
         f"solver:            {info.method}"
         + (f", {info.iterations} iters, residual {info.residual:.2e}"
            if info.iterations is not None else ""),
-        f"I1/I2 @ 1V:        {result.I1_a:.9g} / {result.I2_a:.9g} A "
-        f"(mismatch {result.mismatch_rel:.2e})",
+        (f"I1/I2 @ 1V:        {result.I1_a:.9g} / {result.I2_a:.9g} A "
+         f"(mismatch {result.mismatch_rel:.2e})"
+         if result.contact_model == "equipotential" else
+         f"solve residual:    {result.mismatch_rel:.2e} "
+         f"(KCL, prescribed injection)"),
         f"timings [s]:       "
         f"{', '.join(f'{k}={v:.2f}' for k, v in result.timings.items())}",
         "",

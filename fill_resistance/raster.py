@@ -54,8 +54,8 @@ class RasterStack:
     def cell_of(self, x_nm: float, y_nm: float) -> tuple[int, int] | None:
         """(i, j) of the cell containing the point, or None if outside."""
         ny, nx = self.shape2d
-        j = int((x_nm - self.x0_nm) / self.h_nm)
-        i = int((y_nm - self.y0_nm) / self.h_nm)
+        j = math.floor((x_nm - self.x0_nm) / self.h_nm)
+        i = math.floor((y_nm - self.y0_nm) / self.h_nm)
         if 0 <= i < ny and 0 <= j < nx:
             return i, j
         return None
@@ -81,6 +81,11 @@ def choose_cell_size(bbox_nm: tuple[int, int, int, int], nlayers: int) -> float:
         raise GridSizeError("Copper geometry has a degenerate bounding box.")
 
     if config.CELL_UM_OVERRIDE is not None:
+        if config.CELL_UM_OVERRIDE <= 0:
+            raise GridSizeError(
+                f"Cell size must be positive "
+                f"(got {config.CELL_UM_OVERRIDE:g} um)."
+            )
         h = config.CELL_UM_OVERRIDE * 1000.0
     else:
         h = math.sqrt(w * ht * nlayers / config.TARGET_CELLS)

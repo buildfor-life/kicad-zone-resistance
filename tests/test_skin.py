@@ -58,7 +58,10 @@ def test_parse_frequency():
     assert skin.parse_frequency("2meg") == 2_000_000.0
     assert skin.parse_frequency("100000") == 100_000.0
     assert skin.parse_frequency("100 kHz") == 100_000.0
-    assert skin.parse_frequency("junk") == 0.0
+    with pytest.raises(ValueError):
+        skin.parse_frequency("junk")      # must not silently become DC
+    with pytest.raises(ValueError):
+        skin.parse_frequency("-5k")
 
 
 def test_single_layer_ac_scales_exactly():

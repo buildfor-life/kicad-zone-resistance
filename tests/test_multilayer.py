@@ -74,9 +74,10 @@ def test_parallel_vias_halve_barrel_resistance():
 
 
 def test_antipad_bridging():
-    """3 layers; the middle layer has an antipad hole at the via cell, so
-    the barrel bridges L0 -> L2 directly with DOUBLE the length."""
-    mid_with_hole = [(STRIP, [[(5, 0), (6, 0), (6, 1), (5, 1)]])]
+    """3 layers; the middle layer has an antipad hole at the via, WIDER
+    than the barrel connection search (pad footprint + 1 cell), so the
+    barrel bridges L0 -> L2 directly with DOUBLE the length."""
+    mid_with_hole = [(STRIP, [[(4, 0), (7, 0), (7, 1), (4, 1)]])]
     p = make_multilayer(
         [[(STRIP, [])], mid_with_hole, [(STRIP, [])]],
         rect1_mm=(0, 0, 1, 1), rect2_mm=(9, 0, 10, 1),
@@ -86,6 +87,43 @@ def test_antipad_bridging():
     sig = sigma_s()
     r_exact = (5 + 4) / sig + _r_via(2.0)      # barrel length 2 mm
     assert res.R_ohm == pytest.approx(r_exact, rel=1e-9)
+
+
+def test_thermal_gap_via_connects_to_nearby_copper():
+    """The cell under the via is not copper (thermal-relief knockout),
+    but fill copper within the pad footprint (+1 cell) still reaches the
+    barrel: the link lands on the nearest copper cell instead of being
+    silently dropped."""
+    top_with_gap = [(STRIP, [[(5, 0), (7, 0), (7, 1), (5, 1)]])]
+    p = make_multilayer(
+        [top_with_gap, [(STRIP, [])]],
+        rect1_mm=(0, 0, 1, 1), rect2_mm=(9, 0, 10, 1),
+        contact1="L0", contact2="L1",
+        vias_mm=[(5.5, 0.5)], gap_mm=1.0)
+    res, _ = _solve(p, 1.0)
+    sig = sigma_s()
+    # L0 attaches at col 4 (nearest copper, 1.0 mm from the barrel),
+    # L1 at col 5: 4 faces on L0, the barrel, 4 faces on L1 - exact
+    r_exact = (4 + 4) / sig + _r_via(1.0)
+    assert res.R_ohm == pytest.approx(r_exact, rel=1e-9)
+    assert len(res.via_reports) == 1
+    assert res.via_reports[0].current_a == pytest.approx(1.0, rel=1e-9)
+
+
+def test_dead_barrel_is_warned(capsys):
+    """A via isolated from the fill by an antipad wider than the search
+    radius on all but one layer carries nothing and is reported."""
+    bot_with_hole = [(STRIP, [[(3, 0), (8, 0), (8, 1), (3, 1)]])]
+    p = make_multilayer(
+        [[(STRIP, [])], bot_with_hole],
+        rect1_mm=(0, 0, 1, 1), rect2_mm=(9, 0, 10, 1),
+        contact1="L0", contact2="L0",
+        vias_mm=[(5.5, 0.5)], gap_mm=1.0)
+    res, _ = _solve(p, 1.0)
+    sig = sigma_s()
+    assert res.R_ohm == pytest.approx(9 / sig, rel=1e-9)   # L0 alone
+    assert res.via_reports == []
+    assert "carry no current" in capsys.readouterr().out
 
 
 def test_via_short_between_electrodes_raises():

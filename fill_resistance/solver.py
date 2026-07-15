@@ -2,10 +2,12 @@
 
 Each included copper layer is a 2D 5-point sheet with per-layer face
 conductance sigma_s = t/rho [S] (square cells: independent of h); via and
-plated-through-pad barrels add vertical conductances between vertically
-aligned cells of the layers they span AND reach copper on. A barrel
-passing an antipad still bridges the layers above/below it with the full
-barrel length. At freq > 0 the per-layer sheet conductances and the
+plated-through-pad barrels add vertical conductances between the layers
+they span AND reach copper on. Per layer the barrel attaches to the cell
+under it, or to the nearest copper cell within the pad footprint (+1
+cell) - fills joined by thermal-relief spokes still connect. A barrel
+passing a (wider) antipad still bridges the layers above/below it with
+the full barrel length. At freq > 0 the per-layer sheet conductances and the
 barrel walls get the 1D skin-effect correction (see skin.py; AC results
 are a rigorous lower bound - lateral redistribution is not modeled).
 
@@ -44,7 +46,7 @@ from scipy.sparse import csgraph
 from scipy.sparse import linalg as sla
 
 from . import config, skin
-from .errors import ConnectivityError, ElectrodeError
+from .errors import ConnectivityError, ElectrodeError, SolverError
 from .geometry import Problem
 from .raster import RasterStack, electrodes_touch
 
@@ -63,6 +65,8 @@ class Edges:
     b: np.ndarray
     w: np.ndarray                 # conductance [S]
     via_index: np.ndarray         # int32; -1 = in-plane edge
+    dead_barrels: int = 0         # barrels spanning >=2 layers that found
+                                  # fill copper on fewer than 2 of them
 
 
 @dataclass
@@ -159,35 +163,63 @@ def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
                 ww.append(2.0 * s_a * s_b / (s_a + s_b))
             vv.append(np.full(len(a), -1, dtype=np.int32))
 
+    h = stack.h_nm
+    dead_barrels = 0
     for vi, via in enumerate(problem.vias):
         cell = stack.cell_of(via.x, via.y)
         if cell is None:
             continue
         i, j = cell
-        present = [li for li, layer in enumerate(problem.layers)
-                   if via.spans(layer.z_nm) and stack.masks[li, i, j]]
-        for la, lb in zip(present[:-1], present[1:]):
+        span = [li for li, layer in enumerate(problem.layers)
+                if via.spans(layer.z_nm)]
+        # Connection cell per layer: the cell under the barrel, or the
+        # nearest copper cell whose center lies within the pad footprint
+        # (+1 cell of rasterization slop) - fills joined to the barrel by
+        # thermal-relief spokes still connect, wider antipads do not (the
+        # barrel then bridges the layers above/below as before).
+        r_nm = max(via.pad_nm, via.drill_nm + 300_000) / 2.0 + h
+        win = int(r_nm // h) + 1
+        i0, i1 = max(0, i - win), min(ny, i + win + 1)
+        j0, j1 = max(0, j - win), min(nx, j + win + 1)
+        xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - via.x
+        ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - via.y
+        d2 = ys[:, None] ** 2 + xs[None, :] ** 2
+        d2 = np.where(d2 <= r_nm * r_nm, d2, np.inf)
+        present = []                            # (layer, i, j) per layer
+        for li in span:
+            if stack.masks[li, i, j]:
+                present.append((li, i, j))
+                continue
+            dc = np.where(stack.masks[li, i0:i1, j0:j1], d2, np.inf)
+            ci, cj = np.unravel_index(int(np.argmin(dc)), dc.shape)
+            if np.isfinite(dc[ci, cj]):
+                present.append((li, i0 + ci, j0 + cj))
+        if len(span) >= 2 and len(present) < 2:
+            dead_barrels += 1
+        for (la, ia, ja), (lb, ib, jb) in zip(present[:-1], present[1:]):
             length = problem.layers[lb].z_nm - problem.layers[la].z_nm
             if length <= 0:
                 continue
             r = via.barrel_resistance(length, problem.rho_ohm_m,
                                       problem.plating_nm) * via_factor
-            aa.append(np.array([la * plane + i * nx + j], dtype=np.int64))
-            bb.append(np.array([lb * plane + i * nx + j], dtype=np.int64))
+            aa.append(np.array([la * plane + ia * nx + ja], dtype=np.int64))
+            bb.append(np.array([lb * plane + ib * nx + jb], dtype=np.int64))
             ww.append(np.array([1.0 / r]))
             vv.append(np.array([vi], dtype=np.int32))
 
     if not aa:
         raise ConnectivityError("No copper found on the selected layers.")
     return Edges(a=np.concatenate(aa), b=np.concatenate(bb),
-                 w=np.concatenate(ww), via_index=np.concatenate(vv))
+                 w=np.concatenate(ww), via_index=np.concatenate(vv),
+                 dead_barrels=dead_barrels)
 
 
 def connected_restrict(stack: RasterStack, e1: np.ndarray, e2: np.ndarray,
-                       edges: Edges) -> bool:
+                       edges: Edges) -> tuple[bool, int]:
     """Keep only components (through-plane AND through-via) touching both
-    terminals. Mutates stack.masks / e1 / e2. Returns True if anything
-    was dropped (caller must rebuild edges)."""
+    terminals. Mutates stack.masks / e1 / e2. Returns (changed,
+    n_components): whether anything was dropped (caller must rebuild
+    edges) and how many disjoint copper groups survive."""
     n = stack.masks.size
     graph = sparse.coo_matrix(
         (np.ones(len(edges.a)), (edges.a, edges.b)), shape=(n, n))
@@ -205,7 +237,7 @@ def connected_restrict(stack: RasterStack, e1: np.ndarray, e2: np.ndarray,
     stack.masks &= keep
     e1 &= keep
     e2 &= keep
-    return changed
+    return changed, len(common)
 
 
 def _assemble(state: np.ndarray, edges: Edges, rhs_extra: np.ndarray | None):
@@ -280,7 +312,7 @@ def solve_system(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, Solve
         x, code = sla.cg(A, b, M=M, tol=config.CG_TOL,
                          maxiter=config.CG_MAXITER, callback=count)
     if code != 0:
-        raise RuntimeError(
+        raise SolverError(
             f"CG did not converge in {config.CG_MAXITER} iterations "
             f"(code {code}). Try a coarser grid or raise CG_MAXITER."
         )
@@ -460,12 +492,31 @@ def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
 
     t0 = time.perf_counter()
     edges = build_edges(stack, problem, sigmas, via_factor, sigma_buildup)
-    if connected_restrict(stack, e1, e2, edges):
+    changed, n_groups = connected_restrict(stack, e1, e2, edges)
+    if changed:
         edges = build_edges(stack, problem, sigmas, via_factor, sigma_buildup)
+    if edges.dead_barrels:
+        print(f"warning: {edges.dead_barrels} via/pad barrel(s) found fill "
+              f"copper on fewer than 2 layers and carry no current (pad "
+              f"copper is not modeled; a finer grid may pick up thermal "
+              f"spokes)")
+    if n_groups > 1 and contact_model != "equipotential":
+        raise ConnectivityError(
+            f"The selected fills form {n_groups} disconnected copper groups "
+            f"that each touch both terminals. The uniform-injection contact "
+            f"model cannot determine the current split between disconnected "
+            f"sheets - switch to the equipotential contact model (bonded "
+            f"lug), or include the layers/vias that join them."
+        )
     if stack.buildup is not None:
         stack.buildup &= stack.masks
-    for _, m in (parts1 or []) + (parts2 or []):
+    for label, m in (parts1 or []) + (parts2 or []):
+        had = bool(m.any())
         m &= stack.masks                     # follow the component restriction
+        if had and not m.any():
+            print(f"warning: contact part '{label}' only touches copper "
+                  f"that is not connected to both terminals - it carries "
+                  f"no current")
     timings["edges_s"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
@@ -494,6 +545,13 @@ def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
     P_vias = float(Pe[~inplane].sum())
     P_total = i_test ** 2 * R
     balance = abs((sum(P_layers) + P_vias) - P_total) / max(P_total, 1e-300)
+    if not np.isfinite(balance) or balance > 1e-3:
+        raise SolverError(
+            f"Inconsistent solve: R = {R:.6g} ohm with power-balance error "
+            f"{balance:.2e} (sum of edge powers vs I^2*R). The result is "
+            f"not trustworthy - try the equipotential contact model or a "
+            f"different grid size."
+        )
 
     # via reports: max segment current + total power per via
     Ie = edges.w * (Vflat[edges.a] - Vflat[edges.b])   # amps at unit drive

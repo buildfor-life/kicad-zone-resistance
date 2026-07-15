@@ -96,7 +96,7 @@ class _Dialog(QDialog):
         form.addRow("Extra Cu in openings [µm]:", self.extracu_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._try_accept)
         buttons.rejected.connect(self.reject)
 
         lay = QVBoxLayout(self)
@@ -109,13 +109,21 @@ class _Dialog(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet("color: gray; font-size: 10px;")
         lay.addWidget(note)
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet("color: #b02a2a;")
+        self.error_label.setVisible(False)
+        lay.addWidget(self.error_label)
         lay.addWidget(buttons)
+
+        self._selection: Selection | None = None
 
         self._desired1, self._desired2 = contact1, contact2
         self.net_box.currentTextChanged.connect(self._refresh)
         self._refresh()
 
     def _refresh(self):
+        self.error_label.setVisible(False)
         net = self.net_box.currentText()
         layers = [n for n in self._layer_order
                   if n in self._candidates.get(net, [])]
@@ -144,19 +152,39 @@ class _Dialog(QDialog):
                 out.append(item.text())
         return out
 
-    def selection(self) -> Selection | None:
+    def _build_selection(self) -> Selection:
+        """Parse and validate every field; raises ValueError with a
+        user-readable message instead of silently substituting defaults
+        (a typo silently becoming 1 A / DC would mislabel the result)."""
         layers = self.checked_layers()
         if not layers:
-            return None
+            raise ValueError("Check at least one layer.")
+
+        def number(edit: QLineEdit, name: str) -> float:
+            try:
+                return float(edit.text().strip().replace(",", "."))
+            except ValueError:
+                raise ValueError(f"{name}: '{edit.text()}' is not a number.")
+
+        current = number(self.current_edit, "Test current")
+        if current <= 0:
+            raise ValueError("Test current must be > 0 A.")
+        cell = None
+        if self.cell_edit.text().strip():
+            cell = number(self.cell_edit, "Cell size")
+            if cell <= 0:
+                raise ValueError("Cell size must be > 0 µm.")
         try:
-            current = float(self.current_edit.text().replace(",", "."))
+            freq = skin.parse_frequency(self.freq_edit.text())
         except ValueError:
-            current = config.TEST_CURRENT_A
-        cell_text = self.cell_edit.text().strip()
-        try:
-            cell = float(cell_text.replace(",", ".")) if cell_text else None
-        except ValueError:
-            cell = None
+            raise ValueError(
+                f"Frequency: cannot parse '{self.freq_edit.text()}' "
+                f"(examples: 0, 142k, 1.5M).")
+        extra_cu = 0.0
+        if self.extracu_edit.isEnabled():
+            extra_cu = number(self.extracu_edit, "Extra Cu")
+            if extra_cu < 0:
+                raise ValueError("Extra Cu must be ≥ 0 µm.")
 
         def contact(box: QComboBox) -> str:
             t = box.currentText()
@@ -164,18 +192,23 @@ class _Dialog(QDialog):
                 return "auto"
             return "all" if t == ALL_LAYERS else t
 
-        try:
-            extra_cu = float(self.extracu_edit.text().replace(",", "."))
-        except ValueError:
-            extra_cu = 0.0
         return Selection(net=self.net_box.currentText(), layers=layers,
                          contact1=contact(self.contact1_box),
                          contact2=contact(self.contact2_box),
                          current_a=current, cell_um=cell,
-                         freq_hz=skin.parse_frequency(self.freq_edit.text()),
+                         freq_hz=freq,
                          contact_model=self.model_box.currentData(),
                          include_buildup=self.buildup_check.isChecked(),
-                         extra_cu_um=max(0.0, extra_cu))
+                         extra_cu_um=extra_cu)
+
+    def _try_accept(self) -> None:
+        try:
+            self._selection = self._build_selection()
+        except ValueError as e:
+            self.error_label.setText(str(e))
+            self.error_label.setVisible(True)
+            return
+        self.accept()
 
 
 def ask(candidates: dict[str, list[str]], layer_order: list[str],
@@ -190,4 +223,4 @@ def ask(candidates: dict[str, list[str]], layer_order: list[str],
     dlg.activateWindow()
     if dlg.exec() != QDialog.Accepted:
         return None
-    return dlg.selection()
+    return dlg._selection
