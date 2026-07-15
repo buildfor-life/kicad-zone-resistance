@@ -39,7 +39,9 @@ matplotlib.use(INTERACTIVE_BACKEND or "Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402  (after backend selection)
 from matplotlib.colors import ListedColormap, LogNorm  # noqa: E402
+from matplotlib.gridspec import GridSpec  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
+from matplotlib.widgets import CheckButtons  # noqa: E402
 
 from . import config  # noqa: E402
 
@@ -76,27 +78,89 @@ def _suptitle(problem, stack, result=None) -> str:
     return "  |  ".join(parts)
 
 
-def _layer_fig(stack, window_title: str):
+def _layer_windows(stack, window_title: str, paint, finalize):
+    """Figure with one row per VISIBLE layer. Multi-layer figures on an
+    interactive backend get a layer checkbox panel: unticking a layer
+    removes its row and the remaining rows grow to fill the window (the
+    constrained layout reflows on every draw). paint(ax, li) draws one
+    layer; finalize(fig, rows) with rows = [(li, ax), ...] adds the
+    legend/colorbar/suptitle and returns artists to drop on the next
+    redraw (colorbars). Saved PNGs always contain every layer - they
+    are written before the window shows, with the panel hidden."""
     L = stack.nlayers
     ny, nx = stack.shape2d
     aspect = ny / nx
     w = 9.5
     row_h = min(max(w * aspect * 0.9 + 0.6, 1.8), 8.5 / L)
-    # constrained layout re-runs on every draw, so the figure reflows
-    # when the user resizes the window (tight_layout is one-shot)
-    fig, axes = plt.subplots(L, 1, figsize=(w, row_h * L + 1.4),
-                             sharex=True, sharey=True, squeeze=False,
-                             layout="constrained")
-    axes = axes[:, 0]
+    fig = plt.figure(figsize=(w, row_h * L + 1.4), layout="constrained")
     if INTERACTIVE_BACKEND:
         fig.canvas.manager.set_window_title(window_title)
-    for ax, name in zip(axes, stack.layer_names):
-        ax.set_ylabel(f"{name}\ny [mm]", fontsize=8)
-        ax.tick_params(colors=_INK, labelsize=8)
-        for s in ax.spines.values():
-            s.set_color(_GRID_INK)
-    axes[-1].set_xlabel("x [mm]")
-    return fig, axes
+
+    checks = None
+    if L > 1 and INTERACTIVE_BACKEND:
+        # reserve a strip on the right for the layer checkboxes
+        fig.get_layout_engine().set(rect=(0, 0, 0.86, 1))
+        h_panel = min(0.05 + 0.045 * L, 0.35)
+        panel = fig.add_axes([0.865, 0.96 - h_panel, 0.13, h_panel])
+        panel.set_in_layout(False)
+        checks = CheckButtons(panel, stack.layer_names, [True] * L)
+        for t in checks.labels:
+            t.set_fontsize(7)
+        fig._layer_panel = panel        # hidden while saving PNGs
+
+    state = {"visible": [True] * L, "axes": [], "extras": [],
+             "guard": False}
+
+    def redraw():
+        for ax in state["axes"]:
+            ax.remove()
+        for art in state["extras"]:
+            try:
+                art.remove()
+            except Exception:
+                pass
+        state["axes"], state["extras"] = [], []
+        shown = [li for li in range(L) if state["visible"][li]]
+        if not shown:
+            fig.canvas.draw_idle()
+            return
+        gs = GridSpec(len(shown), 1, figure=fig)
+        rows = []
+        share = None
+        for k, li in enumerate(shown):
+            ax = fig.add_subplot(gs[k], sharex=share, sharey=share)
+            if share is None:
+                share = ax
+            ax.set_ylabel(f"{stack.layer_names[li]}\ny [mm]", fontsize=8)
+            ax.tick_params(colors=_INK, labelsize=8)
+            for sp in ax.spines.values():
+                sp.set_color(_GRID_INK)
+            paint(ax, li)
+            rows.append((li, ax))
+        for _, ax in rows:
+            ax.label_outer()
+        rows[-1][1].set_xlabel("x [mm]")
+        state["axes"] = [ax for _, ax in rows]
+        state["extras"] = list(finalize(fig, rows) or [])
+        fig.canvas.draw_idle()
+
+    def on_check(label):
+        if state["guard"]:
+            return
+        li = stack.layer_names.index(label)
+        if state["visible"][li] and sum(state["visible"]) == 1:
+            state["guard"] = True       # keep at least one layer visible
+            checks.set_active(li)
+            state["guard"] = False
+            return
+        state["visible"][li] = not state["visible"][li]
+        redraw()
+
+    if checks is not None:
+        checks.on_clicked(on_check)
+        fig._layer_checks = checks      # keep the widget alive / testable
+    redraw()
+    return fig
 
 
 def _electrode_labels(ax, stack, e1_l, e2_l):
@@ -154,12 +218,12 @@ def _injection_area_labels(ax, li, layer_name, problem, result):
 
 
 def fig_raster(stack, e1, e2, problem, result=None):
-    fig, axes = _layer_fig(stack, "Fill Resistance - rasterized map")
     cmap = ListedColormap([_BG, _COPPER, _E1_COLOR, _E2_COLOR, _SOLDER,
                            _MESH])
     has_buildup = stack.buildup is not None and stack.buildup.any()
     has_mesh = stack.mesh is not None and stack.mesh.any()
-    for li, ax in enumerate(axes):
+
+    def paint(ax, li):
         codes = np.zeros(stack.shape2d, dtype=np.uint8)
         codes[stack.masks[li]] = 1
         if has_buildup:
@@ -177,45 +241,54 @@ def fig_raster(stack, e1, e2, problem, result=None):
                                    result)
         else:
             _electrode_labels(ax, stack, e1[li], e2[li])
-    handles = [Patch(fc=_COPPER, label="copper"),
-               Patch(fc=_VIA_COLOR, label="vias")]
-    if has_mesh:
-        handles.append(Patch(fc=_MESH, label="adaptive mesh (coarse leaves)"))
-    if has_buildup:
-        handles.append(Patch(
-            fc=_SOLDER,
-            label=f"solder buildup "
-                  f"({problem.solder_thickness_nm / 1000:.0f} µm"
-                  + (f" + {problem.extra_cu_nm / 1000:.0f} µm Cu"
-                     if problem.extra_cu_nm else "") + ")"))
-    if result is not None and (result.part_currents1
-                               or result.part_currents2):
-        entries = ([("+", _E1_COLOR, i, amps)
-                    for i, (_, amps) in enumerate(result.part_currents1)]
-                   + [("-", _E2_COLOR, i, amps)
-                      for i, (_, amps) in enumerate(result.part_currents2)])
-        shown = entries[:14]
-        for sign, color, i, amps in shown:
+
+    def finalize(fig, rows):
+        handles = [Patch(fc=_COPPER, label="copper"),
+                   Patch(fc=_VIA_COLOR, label="vias")]
+        if has_mesh:
+            handles.append(Patch(fc=_MESH,
+                                 label="adaptive mesh (coarse leaves)"))
+        if has_buildup:
             handles.append(Patch(
-                fc=color,
-                label=f"{area_tag(sign, i)}: {amps:.3g} A "
-                      f"({100 * amps / result.i_test:.0f}%)"))
-        if len(entries) > len(shown):
-            handles.append(Patch(fc="#00000000",
-                                 label=f"... +{len(entries) - len(shown)} "
-                                       f"more in summary.txt"))
-    else:
-        handles += [Patch(fc=_E1_COLOR, label="V+"),
-                    Patch(fc=_E2_COLOR, label="V−")]
-    axes[0].legend(handles=handles, loc="upper right", fontsize=7,
-                   framealpha=0.9)
-    fig.suptitle("Rasterized fill + electrodes  |  "
-                 + _suptitle(problem, stack, result), fontsize=10, color=_INK)
-    return fig
+                fc=_SOLDER,
+                label=f"solder buildup "
+                      f"({problem.solder_thickness_nm / 1000:.0f} µm"
+                      + (f" + {problem.extra_cu_nm / 1000:.0f} µm Cu"
+                         if problem.extra_cu_nm else "") + ")"))
+        if result is not None and (result.part_currents1
+                                   or result.part_currents2):
+            entries = ([("+", _E1_COLOR, i, amps)
+                        for i, (_, amps) in
+                        enumerate(result.part_currents1)]
+                       + [("-", _E2_COLOR, i, amps)
+                          for i, (_, amps) in
+                          enumerate(result.part_currents2)])
+            shown = entries[:14]
+            for sign, color, i, amps in shown:
+                handles.append(Patch(
+                    fc=color,
+                    label=f"{area_tag(sign, i)}: {amps:.3g} A "
+                          f"({100 * amps / result.i_test:.0f}%)"))
+            if len(entries) > len(shown):
+                handles.append(Patch(
+                    fc="#00000000",
+                    label=f"... +{len(entries) - len(shown)} "
+                          f"more in summary.txt"))
+        else:
+            handles += [Patch(fc=_E1_COLOR, label="V+"),
+                        Patch(fc=_E2_COLOR, label="V−")]
+        rows[0][1].legend(handles=handles, loc="upper right", fontsize=7,
+                          framealpha=0.9)
+        fig.suptitle("Rasterized fill + electrodes  |  "
+                     + _suptitle(problem, stack, result), fontsize=10,
+                     color=_INK)
+        return []
+
+    return _layer_windows(stack, "Fill Resistance - rasterized map",
+                          paint, finalize)
 
 
 def fig_potential(result, stack, e1, e2, problem):
-    fig, axes = _layer_fig(stack, "Fill Resistance - potential")
     vmax = float(np.nanmax(result.V))
     # uniform model: <V-> = 0 is the reference, individual V- cells can
     # sit slightly below it - keep them in range instead of clipping
@@ -223,12 +296,13 @@ def fig_potential(result, stack, e1, e2, problem):
     unit, scale = ("mV", 1e3) if vmax < 0.1 else ("V", 1.0)
     cmap = matplotlib.colormaps[config.CMAP_POTENTIAL].copy()
     cmap.set_bad(_BG)
-    im = None
-    for li, ax in enumerate(axes):
+
+    def paint(ax, li):
         vs = result.V[li] * scale
-        im = ax.imshow(vs, cmap=cmap, vmin=vmin * scale, vmax=vmax * scale,
-                       origin="upper", extent=stack.extent_mm(),
-                       interpolation="nearest")
+        ax._im = ax.imshow(vs, cmap=cmap, vmin=vmin * scale,
+                           vmax=vmax * scale, origin="upper",
+                           extent=stack.extent_mm(),
+                           interpolation="nearest")
         if np.isfinite(vs).sum() > 4:
             ext = stack.extent_mm()
             ny, nx = stack.shape2d
@@ -240,17 +314,23 @@ def fig_potential(result, stack, e1, e2, problem):
                 ax.contour(xs, ys, vs, levels=15, colors="white",
                            linewidths=0.4, alpha=0.5)
         _electrode_labels(ax, stack, e1[li], e2[li])
-    cb = fig.colorbar(im, ax=axes, shrink=0.85)
-    cb.set_label(f"potential [{unit}] @ {result.i_test:g} A", fontsize=9)
-    fig.suptitle("Potential  |  " + _suptitle(problem, stack, result),
-                 fontsize=10, color=_INK)
-    return fig
+
+    def finalize(fig, rows):
+        cb = fig.colorbar(rows[0][1]._im, ax=[ax for _, ax in rows],
+                          shrink=0.85)
+        cb.set_label(f"potential [{unit}] @ {result.i_test:g} A",
+                     fontsize=9)
+        fig.suptitle("Potential  |  " + _suptitle(problem, stack, result),
+                     fontsize=10, color=_INK)
+        return [cb]
+
+    return _layer_windows(stack, "Fill Resistance - potential", paint,
+                          finalize)
 
 
 def _field_fig(result, stack, e1, e2, problem, data3, cmap_name, dyn_range,
-               label, title, window):
+               label, title, window, paint_extra=None, finalize_extra=None):
     """Shared per-layer LogNorm field figure (current, power)."""
-    fig, axes = _layer_fig(stack, window)
     vmax = float(np.nanmax(data3))
     cmap = matplotlib.colormaps[cmap_name].copy()
     cmap.set_bad(_BG)
@@ -258,62 +338,79 @@ def _field_fig(result, stack, e1, e2, problem, data3, cmap_name, dyn_range,
         norm = LogNorm(vmin=vmax / dyn_range, vmax=vmax)
     else:
         norm = None
-    im = None
-    for li, ax in enumerate(axes):
+    if vmax > 0:
+        mli, mi, mj = np.unravel_index(np.nanargmax(data3), data3.shape)
+        mx = (stack.x0_nm + (mj + 0.5) * stack.h_nm) * 1e-6
+        my = (stack.y0_nm + (mi + 0.5) * stack.h_nm) * 1e-6
+
+    def paint(ax, li):
         d = data3[li]
         shown = np.clip(d, vmax / dyn_range, None) if norm is not None else d
-        im = ax.imshow(shown, cmap=cmap, norm=norm, origin="upper",
-                       extent=stack.extent_mm(), interpolation="nearest")
+        ax._im = ax.imshow(shown, cmap=cmap, norm=norm, origin="upper",
+                           extent=stack.extent_mm(),
+                           interpolation="nearest")
         _electrode_labels(ax, stack, e1[li], e2[li])
-    if vmax > 0:
-        li, i, j = np.unravel_index(np.nanargmax(data3), data3.shape)
-        mx = (stack.x0_nm + (j + 0.5) * stack.h_nm) * 1e-6
-        my = (stack.y0_nm + (i + 0.5) * stack.h_nm) * 1e-6
-        axes[li].plot(mx, my, "o", ms=9, mfc="none", mec="white", mew=1.4)
-        axes[li].annotate(f"max {vmax:.3g}", (mx, my), xytext=(10, -10),
-                          textcoords="offset points", color="white",
-                          fontsize=8,
-                          bbox=dict(boxstyle="round,pad=0.2", fc="#00000088",
-                                    ec="none"))
-    cb = fig.colorbar(im, ax=axes, shrink=0.85)
-    cb.set_label(label, fontsize=9)
-    fig.suptitle(title + "  |  " + _suptitle(problem, stack, result),
-                 fontsize=10, color=_INK)
-    return fig, axes
+        if vmax > 0 and li == mli:
+            ax.plot(mx, my, "o", ms=9, mfc="none", mec="white", mew=1.4)
+            ax.annotate(f"max {vmax:.3g}", (mx, my), xytext=(10, -10),
+                        textcoords="offset points", color="white",
+                        fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="#00000088",
+                                  ec="none"))
+        if paint_extra is not None:
+            paint_extra(ax, li)
+
+    def finalize(fig, rows):
+        cb = fig.colorbar(rows[0][1]._im, ax=[ax for _, ax in rows],
+                          shrink=0.85)
+        cb.set_label(label, fontsize=9)
+        fig.suptitle(title + "  |  " + _suptitle(problem, stack, result),
+                     fontsize=10, color=_INK)
+        if finalize_extra is not None:
+            finalize_extra(fig, rows)
+        return [cb]
+
+    return _layer_windows(stack, window, paint, finalize)
 
 
 def fig_current(result, stack, e1, e2, problem):
-    fig, axes = _field_fig(
+    v = result.via_reports[0] if result.via_reports else None
+
+    def paint_extra(ax, li):
+        if v is not None:
+            ax.plot(v.x_mm, v.y_mm, "s", ms=7, mfc="none", mec="#7fe0a8",
+                    mew=1.2)
+
+    def finalize_extra(fig, rows):
+        if v is not None:
+            rows[0][1].annotate(
+                f"hottest via {v.current_a:.3g} A", (v.x_mm, v.y_mm),
+                xytext=(10, 10), textcoords="offset points",
+                color="white", fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.2", fc="#2d6b45",
+                          ec="none"))
+
+    return _field_fig(
         result, stack, e1, e2, problem, result.Jmag * 1e-6,
         config.CMAP_CURRENT, config.CURRENT_DYNAMIC_RANGE,
         f"|J| [A/mm²] @ {result.i_test:g} A",
-        "Current density (log)", "Fill Resistance - current density")
-    # mark the hottest via
-    if result.via_reports:
-        v = result.via_reports[0]
-        for ax in axes:
-            ax.plot(v.x_mm, v.y_mm, "s", ms=7, mfc="none", mec="#7fe0a8",
-                    mew=1.2)
-        axes[0].annotate(
-            f"hottest via {v.current_a:.3g} A", (v.x_mm, v.y_mm),
-            xytext=(10, 10), textcoords="offset points", color="white",
-            fontsize=8,
-            bbox=dict(boxstyle="round,pad=0.2", fc="#2d6b45", ec="none"))
-    return fig
+        "Current density (log)", "Fill Resistance - current density",
+        paint_extra=paint_extra, finalize_extra=finalize_extra)
 
 
 def fig_power(result, stack, e1, e2, problem):
-    # W/m^2 -> W/mm^2
-    fig, axes = _field_fig(
-        result, stack, e1, e2, problem, result.Parea * 1e-6,
-        config.CMAP_POWER, config.POWER_DYNAMIC_RANGE,
-        f"p [W/mm²] @ {result.i_test:g} A",
-        "Power density (log)", "Fill Resistance - power density")
-    for li, ax in enumerate(axes):
+    def paint_extra(ax, li):
         ax.set_title(f"P({stack.layer_names[li]}) = "
                      f"{_fmt_si(result.P_layers[li], 'W')}",
                      fontsize=8, color=_INK, loc="right", pad=2)
-    return fig
+
+    # W/m^2 -> W/mm^2
+    return _field_fig(
+        result, stack, e1, e2, problem, result.Parea * 1e-6,
+        config.CMAP_POWER, config.POWER_DYNAMIC_RANGE,
+        f"p [W/mm²] @ {result.i_test:g} A",
+        "Power density (log)", "Fill Resistance - power density",
+        paint_extra=paint_extra)
 
 
 def fig_error(message: str):
@@ -406,9 +503,14 @@ def save_and_show(figs_named: list[tuple], outdir: Path | None,
     if outdir is not None:
         outdir.mkdir(parents=True, exist_ok=True)
         for fig, name in figs_named:
+            panel = getattr(fig, "_layer_panel", None)
+            if panel is not None:
+                panel.set_visible(False)     # PNGs carry no checkboxes
             p = outdir / f"{name}.png"
             fig.savefig(p, dpi=config.DPI, facecolor="white",
                         bbox_inches="tight")
+            if panel is not None:
+                panel.set_visible(True)
             saved.append(p)
             print(f"saved {p}")
     if show and config.INTERACTIVE:
