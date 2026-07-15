@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-JSON_SCHEMA_VERSION = 4
+JSON_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,34 @@ class SurfaceBuildup:
     layer inside solder-mask openings (zones on F.Mask/B.Mask)."""
     layer_name: str                           # copper layer it sits on
     polygons: list[Polygon]
+
+
+@dataclass
+class TrackSeg:
+    """One trace segment: straight ((2, 2) points) or arc ((3, 2)
+    start/mid/end points). Kept as centerline + width so the raster can
+    decide per run: wide traces are rasterized from their outline,
+    traces narrower than TRACK_1D_FACTOR grid cells become exact 1D
+    resistor chains along the centerline."""
+    layer_name: str
+    points: np.ndarray                        # (2|3, 2) int64 nm
+    width_nm: int
+
+    def outline(self, tol_nm: float) -> np.ndarray:
+        if len(self.points) == 3:
+            return arc_band_ring(self.points[0], self.points[1],
+                                 self.points[2], self.width_nm, tol_nm)
+        return capsule_ring(int(self.points[0][0]), int(self.points[0][1]),
+                            int(self.points[1][0]), int(self.points[1][1]),
+                            self.width_nm, tol_nm)
+
+    def centerline(self, tol_nm: float) -> np.ndarray:
+        """(N, 2) float polyline along the trace center, start to end."""
+        if len(self.points) == 3:
+            pts = arc_points(self.points[0], self.points[1], self.points[2],
+                             tol_nm)
+            return np.vstack([pts, self.points[2][None, :]]).astype(float)
+        return self.points.astype(float)
 
 
 @dataclass
@@ -115,6 +143,7 @@ class Problem:
     solder_thickness_nm: int = 50_000
     solder_rho_ohm_m: float = 1.32e-7
     extra_cu_nm: int = 0
+    tracks: list[TrackSeg] = field(default_factory=list)
 
     @property
     def layer_names(self) -> list[str]:
@@ -125,11 +154,15 @@ class Problem:
         return (self.layers[layer_index].thickness_nm * 1e-9) / self.rho_ohm_m
 
     def copper_bbox(self) -> tuple[int, int, int, int]:
-        xs = np.concatenate([p.outline[:, 0]
-                             for l in self.layers for p in l.polygons])
-        ys = np.concatenate([p.outline[:, 1]
-                             for l in self.layers for p in l.polygons])
-        return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+        xs = [p.outline[:, 0] for l in self.layers for p in l.polygons]
+        ys = [p.outline[:, 1] for l in self.layers for p in l.polygons]
+        for seg in self.tracks:
+            ring = seg.outline(100_000.0)      # coarse tol: bbox only
+            xs.append(ring[:, 0])
+            ys.append(ring[:, 1])
+        x = np.concatenate(xs)
+        y = np.concatenate(ys)
+        return int(x.min()), int(y.min()), int(x.max()), int(y.max())
 
 
 def _arc_params(start, mid, end) -> tuple[float, float, float, float, float] | None:
@@ -313,6 +346,11 @@ def problem_to_json(p: Problem) -> dict:
             for l in p.layers
         ],
         "vias": [vars(v) | {} for v in p.vias],
+        "tracks": [
+            {"layer_name": s.layer_name, "points": s.points.tolist(),
+             "width_nm": s.width_nm}
+            for s in p.tracks
+        ],
         "buildups": [
             {"layer_name": b.layer_name,
              "polygons": [_poly_to_json(poly) for poly in b.polygons]}
@@ -386,6 +424,12 @@ def problem_from_json(d: dict) -> Problem:
         solder_thickness_nm=int(d.get("solder_thickness_nm", 50_000)),
         solder_rho_ohm_m=float(d.get("solder_rho_ohm_m", 1.32e-7)),
         extra_cu_nm=int(d.get("extra_cu_nm", 0)),
+        tracks=[
+            TrackSeg(layer_name=td["layer_name"],
+                     points=np.asarray(td["points"], dtype=np.int64),
+                     width_nm=int(td["width_nm"]))
+            for td in d.get("tracks", [])       # <= v4: baked into polygons
+        ],
     )
 
 

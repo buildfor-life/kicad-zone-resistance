@@ -38,7 +38,8 @@ def main() -> None:
                 board_io.refill(board)
             fills = board_io.gather_net_fills(board)
             tracks = board_io.gather_net_tracks(board)
-            copper = board_io.merge_copper(fills, tracks)
+            copper = board_io.merge_copper(
+                fills, board_io.tracks_as_polygons(tracks))
             candidate_nets = board_io.nets_overlapping(copper, es1, es2)
             buildups = board_io.gather_mask_buildups(board)
         except ApiError as e:

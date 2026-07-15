@@ -38,6 +38,10 @@ class RasterStack:
     layer_names: list[str]
     buildup: np.ndarray | None = None   # bool (L, ny, nx): solder buildup
                                         # (mask opening ∩ copper)
+    chain: np.ndarray | None = None     # bool (L, ny, nx): cells that are
+                                        # copper only through a 1D trace chain
+    chain_edges: tuple | None = None    # (a, b, g_dc, layer) arrays: explicit
+                                        # DC conductances of the chain links
 
     @property
     def nlayers(self) -> int:
@@ -174,9 +178,28 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
                     _paint_ring(stack, hole, False, pmask)
                 stack.masks[li] |= pmask
             else:
-                # hole-less (e.g. one of many track outlines): paint the
-                # layer mask directly, skipping the full-frame temp
+                # hole-less (e.g. a track outline): paint the layer mask
+                # directly, skipping the full-frame temp
                 _paint_ring(stack, poly.outline, True, stack.masks[li])
+
+    # traces: wide ones are rasterized from their outline, sub-resolution
+    # ones become exact 1D resistor chains along their centerline
+    index = {name: li for li, name in enumerate(stack.layer_names)}
+    narrow = []
+    for seg in problem.tracks:
+        li = index.get(seg.layer_name)
+        if li is None:
+            continue
+        if seg.width_nm >= config.TRACK_1D_FACTOR * h_nm:
+            _paint_ring(stack, seg.outline(config.ARC_TOL_FRACTION * h_nm),
+                        True, stack.masks[li])
+        else:
+            narrow.append((li, seg))
+    if narrow:
+        n_links = _build_chains(stack, problem, narrow)
+        print(f"{len(narrow)} trace(s) narrower than "
+              f"{config.TRACK_1D_FACTOR:g} cells modeled as 1D resistor "
+              f"chains ({n_links} links)")
 
     if problem.buildups:
         stack.buildup = np.zeros_like(stack.masks)
@@ -193,6 +216,61 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
                 stack.buildup[li] |= pmask
         stack.buildup &= stack.masks        # solder wets exposed copper only
     return stack
+
+
+def _build_chains(stack: RasterStack, problem: Problem,
+                  narrow: list) -> int:
+    """Sub-resolution traces as 1D resistor chains: mark the cells their
+    centerline crosses as copper and record one explicit conductance per
+    pair of consecutive cells, allocating the trace's TRUE arc length to
+    each link (a diagonal trace is not staircase-inflated). Links whose
+    cells are already regular copper AND face-adjacent are skipped there
+    (the trace merges into the pour: union, not sum). Returns the number
+    of links."""
+    L, ny, nx = stack.masks.shape
+    plane = ny * nx
+    h = stack.h_nm
+    regular = stack.masks.copy()
+    chain = np.zeros_like(stack.masks)
+    aa, bb, gg, ll = [], [], [], []
+    for li, seg in narrow:
+        pts = seg.centerline(0.2 * h)
+        d = np.hypot(*np.diff(pts, axis=0).T)
+        s = np.concatenate([[0.0], np.cumsum(d)])
+        length = float(s[-1])
+        n_samp = max(2, int(math.ceil(length / (h / 3.0))) + 1)
+        ss = np.linspace(0.0, length, n_samp)
+        xs = np.interp(ss, s, pts[:, 0])
+        ys = np.interp(ss, s, pts[:, 1])
+        jj = np.floor((xs - stack.x0_nm) / h).astype(np.int64)
+        ii = np.floor((ys - stack.y0_nm) / h).astype(np.int64)
+        jj = np.clip(jj, 0, nx - 1)             # bbox includes all tracks;
+        ii = np.clip(ii, 0, ny - 1)             # clip only guards rounding
+        first = np.concatenate(
+            [[True], (ii[1:] != ii[:-1]) | (jj[1:] != jj[:-1])])
+        ci, cj, cs = ii[first], jj[first], ss[first]
+        chain[li, ci, cj] = True
+        g0 = (seg.width_nm * 1e-9
+              * problem.layers[li].thickness_nm * 1e-9 / problem.rho_ohm_m)
+        for k in range(len(ci) - 1):
+            dl = (cs[k + 1] - cs[k]) * 1e-9
+            if dl <= 0:
+                continue
+            adj4 = abs(int(ci[k + 1] - ci[k])) + abs(int(cj[k + 1] - cj[k])) == 1
+            if adj4 and regular[li, ci[k], cj[k]] \
+                    and regular[li, ci[k + 1], cj[k + 1]]:
+                continue                        # pour conducts here already
+            aa.append(li * plane + int(ci[k]) * nx + int(cj[k]))
+            bb.append(li * plane + int(ci[k + 1]) * nx + int(cj[k + 1]))
+            gg.append(g0 / dl)
+            ll.append(li)
+    stack.chain = chain & ~regular
+    stack.masks |= stack.chain
+    stack.chain_edges = (np.asarray(aa, dtype=np.int64),
+                         np.asarray(bb, dtype=np.int64),
+                         np.asarray(gg, dtype=float),
+                         np.asarray(ll, dtype=np.int64))
+    return len(aa)
 
 
 def _rect_cells(stack: RasterStack, rect: Rect) -> np.ndarray:

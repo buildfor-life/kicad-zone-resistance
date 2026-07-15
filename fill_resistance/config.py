@@ -42,6 +42,11 @@ BUILDUP_EXTRA_CU_UM = 0.0       # optional user-added copper (busbar/wire
 INCLUDE_TRACKS = True           # the net's traces (straight + arc tracks)
                                 # conduct together with the zone fills;
                                 # dialog-toggleable
+TRACK_1D_FACTOR = 3.0           # traces narrower than this many grid cells
+                                # become exact 1D resistor chains along their
+                                # centerline instead of rasterized outlines
+                                # (no discretization error in the trace R;
+                                # 0 = always rasterize)
 LAYER_HINT: str | None = None   # e.g. "F.Cu" to disambiguate candidate fills
 ELECTRODE_POS_LAYER = "User.1"  # rectangles on this layer mark V+ contact parts
 ELECTRODE_NEG_LAYER = "User.2"  # rectangles on this layer mark V- contact parts

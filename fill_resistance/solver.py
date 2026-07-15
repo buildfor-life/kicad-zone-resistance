@@ -141,6 +141,10 @@ def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
 
     for li in range(L):
         m = stack.masks[li]
+        if stack.chain is not None:
+            # chain-only cells connect through their explicit 1D links,
+            # never through sheet faces (their copper is narrower than h)
+            m = m & ~stack.chain[li]
         sig = sigmas[li]
         scell = _sigma_2d(stack, li, sig, sigma_buildup)
         base = li * plane
@@ -206,6 +210,19 @@ def build_edges(stack: RasterStack, problem: Problem, sigmas: list[float],
             bb.append(np.array([lb * plane + ib * nx + jb], dtype=np.int64))
             ww.append(np.array([1.0 / r]))
             vv.append(np.array([vi], dtype=np.int32))
+
+    if stack.chain_edges is not None and len(stack.chain_edges[0]):
+        ca, cb, cg, cl = stack.chain_edges
+        alive = stack.masks.ravel()[ca] & stack.masks.ravel()[cb]
+        if alive.any():
+            # skin correction: scale like the layer's sheet conductance
+            fac = np.array([sigmas[l] * problem.rho_ohm_m
+                            / (problem.layers[l].thickness_nm * 1e-9)
+                            for l in range(L)])
+            aa.append(ca[alive])
+            bb.append(cb[alive])
+            ww.append((cg * fac[cl])[alive])
+            vv.append(np.full(int(alive.sum()), -1, dtype=np.int32))
 
     if not aa:
         raise ConnectivityError("No copper found on the selected layers.")
@@ -540,6 +557,8 @@ def run_solve(problem: Problem, stack: RasterStack, e1: np.ndarray,
         )
     if stack.buildup is not None:
         stack.buildup &= stack.masks
+    if stack.chain is not None:
+        stack.chain &= stack.masks
     for label, m in (parts1 or []) + (parts2 or []):
         had = bool(m.any())
         m &= stack.masks                     # follow the component restriction

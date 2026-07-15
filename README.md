@@ -80,7 +80,12 @@ SWIG API. Requires KiCad **10.0.1+**.
   fill on fewer than two layers carry no current and are reported.
 - The net's **traces** (straight and arc tracks, exact outline polygons
   incl. rounded ends) conduct together with the fills — dialog checkbox,
-  on by default (`INCLUDE_TRACKS`). Pad copper other than the selected
+  on by default (`INCLUDE_TRACKS`). Traces narrower than
+  `TRACK_1D_FACTOR` (3) grid cells are modeled as exact **1D resistor
+  chains** along their centerline — true arc length per link, so their
+  series resistance carries no discretization error and no cell-size
+  tuning is needed for thin traces. 1D-modeled traces show potential and
+  power density but no |J| field. Pad copper other than the selected
   contacts is still **not** part of the conductor model.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
   default**; `INCLUDE_MASK_BUILDUP`): zones drawn on `F.Mask`/`B.Mask`

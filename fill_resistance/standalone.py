@@ -61,6 +61,7 @@ def main(argv=None) -> int:
     if args.layers:
         keep = [s.strip() for s in args.layers.split(",")]
         problem.layers = [l for l in problem.layers if l.layer_name in keep]
+        problem.tracks = [t for t in problem.tracks if t.layer_name in keep]
         if not problem.layers:
             print(f"ERROR: no layer of the dump matches --layers {args.layers}",
                   file=sys.stderr)
