@@ -1,0 +1,158 @@
+"""Barrel (via / through-hole pad) contact tests: current enters at the
+drill-wall ring, not the pad face, and soldered THT joints carry a
+solder-filled hole plus an average-thickness solder coat on the pad."""
+import math
+
+import numpy as np
+import pytest
+
+from fill_resistance import raster, solver
+from fill_resistance.geometry import (Electrode, Polygon, ViaLink,
+                                      contact_solder_buildups, load_problem,
+                                      save_problem)
+from tests.util import NM, make_problem, rect_mm, ring_mm
+
+PLATE20 = [(0, 0), (20, 0), (20, 20), (0, 20)]
+
+
+def _barrel(x_mm, y_mm, drill_mm, pad_mm=0.0, solder=False, polygons=None):
+    r = max(pad_mm, drill_mm) / 2
+    return Electrode(
+        rect=rect_mm((x_mm - r, y_mm - r, x_mm + r, y_mm + r)),
+        contact="all", label=f"via({x_mm},{y_mm})",
+        drill_nm=int(drill_mm * NM), pad_nm=int(pad_mm * NM),
+        center=(int(x_mm * NM), int(y_mm * NM)), solder=solder,
+        polygons=polygons)
+
+
+def _disc(x_mm, y_mm, r_mm, n=64) -> Polygon:
+    ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    return Polygon(outline=ring_mm(
+        [(x_mm + r_mm * np.cos(a), y_mm + r_mm * np.sin(a)) for a in ang]))
+
+
+def _solve(p, h_mm, model="equipotential"):
+    stack = raster.rasterize_stack(p, h_mm * NM)
+    e1, e2 = raster.electrode_masks(stack, p)
+    return solver.run_solve(p, stack, e1, e2, 1.0, contact_model=model), stack
+
+
+def test_ring_cells_at_drill_wall():
+    """The contact cells of a barrel electrode form a ring at the drill
+    wall (one-cell tolerance), not the pad face."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=1.6)]
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    e1, _ = raster.electrode_masks(stack, p)
+    ii, jj = np.nonzero(e1[0])
+    xs = stack.x0_nm + (jj + 0.5) * stack.h_nm - 10 * NM
+    ys = stack.y0_nm + (ii + 0.5) * stack.h_nm - 10 * NM
+    d = np.hypot(xs, ys)
+    assert len(ii) >= 8
+    assert (np.abs(d - 0.5 * NM) <= stack.h_nm + 1).all()
+    # far fewer cells than the full 1.6 mm pad disc
+    assert len(ii) < 0.5 * math.pi * (0.8 * NM / stack.h_nm) ** 2
+
+
+def test_two_barrel_contacts_match_acosh():
+    """Two equipotential circular contacts of radius a, centers d apart,
+    on a large sheet: R = rho/(pi t) * acosh(d / 2a). The barrel-ring
+    contact must reproduce the analytic spreading resistance."""
+    t_um, rho = 70.0, 1.68e-8
+    plate = [(0, 0), (80, 0), (80, 60), (0, 60)]
+    p = make_problem([(plate, [])], rect1_mm=(0, 0, 1, 1),
+                     rect2_mm=(79, 59, 80, 60), t_um=t_um, rho=rho)
+    p.electrodes1 = [_barrel(30, 30, drill_mm=2.0)]
+    p.electrodes2 = [_barrel(50, 30, drill_mm=2.0)]
+    res, _ = _solve(p, 0.15)
+    r_ref = rho / (math.pi * t_um * 1e-6) * math.acosh(20e-3 / (2 * 1e-3))
+    assert res.R_ohm == pytest.approx(r_ref, rel=0.08)
+
+
+def test_barrel_includes_pad_spreading_resistance():
+    """Injecting at the barrel wall (0.5 mm ring) sees the spreading
+    resistance the whole-pad-face contact (2.4 mm equipotential disc)
+    short-circuits: R_barrel > R_pad_face."""
+    p1 = make_problem([(PLATE20, [])],
+                      rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p1.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4)]
+    r_barrel, _ = _solve(p1, 0.1)
+
+    p2 = make_problem([(PLATE20, [])],
+                      rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p2.electrodes1 = [Electrode(rect=rect_mm((8.8, 8.8, 11.2, 11.2)),
+                                contact="all", label="pad face",
+                                polygons=[_disc(10, 10, 1.2)])]
+    r_face, _ = _solve(p2, 0.1)
+    assert r_barrel.R_ohm > r_face.R_ohm * 1.05
+
+
+def test_ring_fallback_nearest_copper():
+    """Antipad bigger than the drill: no copper at the wall ring, the
+    contact falls back to the nearest copper ring inside the pad
+    footprint (e.g. thermal-spoke tips / hole edge)."""
+    hole = [(10 + 1.2 * np.cos(a), 10 + 1.2 * np.sin(a))
+            for a in np.linspace(0, 2 * np.pi, 64, endpoint=False)]
+    p = make_problem([(PLATE20, [hole])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.electrodes1 = [_barrel(10, 10, drill_mm=0.6, pad_mm=4.0)]
+    res, stack = _solve(p, 0.1)
+    e1, _ = raster.electrode_masks(stack, p)
+    ii, jj = np.nonzero(e1[0])
+    d = np.hypot(stack.x0_nm + (jj + 0.5) * stack.h_nm - 10 * NM,
+                 stack.y0_nm + (ii + 0.5) * stack.h_nm - 10 * NM)
+    assert len(ii) >= 8
+    assert (d >= 1.2 * NM - stack.h_nm).all()
+    assert (d <= 1.2 * NM + 2.5 * stack.h_nm).all()
+    assert np.isfinite(res.R_ohm) and res.R_ohm > 0
+
+
+def test_solder_filled_barrel_resistance():
+    """THT joints: the solder core conducts in parallel with the plating.
+    Exact parallel-area formula, and a sanity ratio for a 1 mm drill."""
+    v = ViaLink(x=0, y=0, drill_nm=1_000_000, z_top_nm=-1, z_bot_nm=1)
+    rho, sn = 1.68e-8, 1.32e-7
+    r_plain = v.barrel_resistance(1_600_000, rho, 18_000)
+    r_fill = v.barrel_resistance(1_600_000, rho, 18_000,
+                                 solder_rho_ohm_m=sn)
+    ga = math.pi * 1e-3 * 18e-6 / rho
+    ga += math.pi * (0.5e-3 - 18e-6) ** 2 / sn
+    assert r_fill == pytest.approx(1.6e-3 / ga, rel=1e-12)
+    assert 1.5 < r_plain / r_fill < 4.0
+
+
+def test_contact_solder_coat():
+    """A soldered THT contact adds an average-thickness solder buildup
+    over the pad face on the outer layers, lowering the spreading
+    resistance vs the bare barrel contact."""
+    def prob():
+        p = make_problem([(PLATE20, [])],
+                         rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+        p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4,
+                                 solder=True, polygons=[_disc(10, 10, 1.2)])]
+        return p
+
+    p = prob()
+    assert contact_solder_buildups(p) == ["F.Cu"]
+    assert len(p.buildups) == 1 and p.buildups[0].layer_name == "F.Cu"
+    r_coat, stack = _solve(p, 0.1)
+    assert stack.buildup is not None and stack.buildup.any()
+
+    r_bare, _ = _solve(prob(), 0.1)          # helper not called: no coat
+    assert r_coat.R_ohm < r_bare.R_ohm
+
+
+def test_barrel_electrode_json_roundtrip(tmp_path):
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.electrodes1 = [_barrel(10, 10, drill_mm=0.6, pad_mm=1.2, solder=True,
+                             polygons=[_disc(10, 10, 0.6)])]
+    p.electrodes1[0].barrel_z = (-1, 1_600_001)
+    f = tmp_path / "d.json"
+    save_problem(p, f)
+    e = load_problem(f).electrodes1[0]
+    assert e.drill_nm == 600_000 and e.pad_nm == 1_200_000
+    assert e.center == (10 * NM, 10 * NM)
+    assert e.barrel_z == (-1, 1_600_001)
+    assert e.solder is True and len(e.polygons) == 1

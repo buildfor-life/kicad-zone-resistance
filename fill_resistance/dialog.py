@@ -37,6 +37,7 @@ class Selection:
     extra_cu_um: float = 0.0
     include_tracks: bool = True
     vias_capped: bool = True
+    cap_max_drill_mm: float = 0.5
     adaptive: bool = False
 
 
@@ -72,6 +73,11 @@ class _Dialog(QDialog):
             f"off = open mouths)")
         self.capped_check.setChecked(config.VIAS_CAPPED)
         form.addRow("Vias:", self.capped_check)
+
+        self.cap_drill_edit = QLineEdit(f"{config.CAP_MAX_DRILL_MM:g}")
+        self.cap_drill_edit.setEnabled(config.VIAS_CAPPED)
+        self.capped_check.toggled.connect(self.cap_drill_edit.setEnabled)
+        form.addRow("Capped up to drill [mm]:", self.cap_drill_edit)
 
         self.adaptive_check = QCheckBox(
             "adaptive cells (coarsen plane interiors; faster on large "
@@ -205,6 +211,11 @@ class _Dialog(QDialog):
             extra_cu = number(self.extracu_edit, "Extra Cu")
             if extra_cu < 0:
                 raise ValueError("Extra Cu must be ≥ 0 µm.")
+        cap_max_drill = config.CAP_MAX_DRILL_MM
+        if self.capped_check.isChecked():
+            cap_max_drill = number(self.cap_drill_edit, "Capped up to drill")
+            if cap_max_drill <= 0:
+                raise ValueError("Capped-up-to drill must be > 0 mm.")
 
         def contact(box: QComboBox) -> str:
             t = box.currentText()
@@ -222,6 +233,7 @@ class _Dialog(QDialog):
                          extra_cu_um=extra_cu,
                          include_tracks=self.tracks_check.isChecked(),
                          vias_capped=self.capped_check.isChecked(),
+                         cap_max_drill_mm=cap_max_drill,
                          adaptive=self.adaptive_check.isChecked())
 
     def _try_accept(self) -> None:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from kipy import KiCad
 from kipy.board import Board
-from kipy.board_types import ArcTrack, BoardRectangle, Pad
+from kipy.board_types import ArcTrack, BoardRectangle, Pad, Via
 from kipy.proto.board.board_pb2 import BoardStackupLayerType
 from kipy.proto.board.board_types_pb2 import ZoneType
 from kipy.util.board_layer import (canonical_name, is_copper_layer,
@@ -22,7 +22,8 @@ import numpy as np
 from . import config
 from .errors import ApiVersionError, CandidateError, SelectionError
 from .geometry import (Electrode, LayerFill, Polygon, Problem, Rect,
-                       SurfaceBuildup, TrackSeg, ViaLink, linearize_ring)
+                       SurfaceBuildup, TrackSeg, ViaLink,
+                       contact_solder_buildups, linearize_ring)
 
 MASK_TO_COPPER = {"F.Mask": "F.Cu", "B.Mask": "B.Cu"}
 
@@ -179,7 +180,8 @@ def _pad_polygons(board: Board, pad: Pad, contact: str) -> list[Polygon] | None:
     return None
 
 
-def _to_electrode(board: Board, item) -> Electrode:
+def _to_electrode(board: Board, item,
+                  stackup: StackupInfo | None = None) -> Electrode:
     if isinstance(item, BoardRectangle):
         tl, br = item.top_left, item.bottom_right
         rect = Rect.normalized(tl.x, tl.y, br.x, br.y,
@@ -188,6 +190,22 @@ def _to_electrode(board: Board, item) -> Electrode:
         cy = (rect.y0 + rect.y1) / 2e6
         return Electrode(rect=rect, contact="all",
                          label=f"rect({cx:.1f},{cy:.1f})")
+    if isinstance(item, Via):
+        via: Via = item
+        x, y = via.position.x, via.position.y
+        drill = int(via.drill_diameter or 0) or _pad_drill_nm(via)
+        if drill <= 0:
+            raise SelectionError(
+                f"Selected via at ({x / 1e6:.2f}, {y / 1e6:.2f}) mm has no "
+                f"drill diameter - cannot use it as a contact.")
+        pad_nm = _padstack_pad_nm(via)
+        r = max(pad_nm, drill) // 2
+        rect = Rect.normalized(x - r, y - r, x + r, y + r, "via")
+        return Electrode(
+            rect=rect, contact="all", label=f"via({x / 1e6:.1f},{y / 1e6:.1f})",
+            drill_nm=drill, pad_nm=pad_nm, center=(x, y),
+            barrel_z=(_padstack_span(via.padstack, stackup)
+                      if stackup is not None else None))
     # Pad
     pad: Pad = item
     contact = _pad_default_contact(pad)
@@ -197,37 +215,48 @@ def _to_electrode(board: Board, item) -> Electrode:
     if box is None:
         raise SelectionError(f"Could not get the bounding box of {label}.")
     rect = _box2_to_rect(box, "pad")
+    drill = _pad_drill_nm(pad)
     return Electrode(rect=rect, contact=contact,
-                     polygons=_pad_polygons(board, pad, contact), label=label)
+                     polygons=_pad_polygons(board, pad, contact), label=label,
+                     # through-hole pad: current enters at the soldered
+                     # barrel; the joint is solder-filled + pad-coated
+                     drill_nm=drill, pad_nm=_padstack_pad_nm(pad),
+                     center=(pad.position.x, pad.position.y),
+                     solder=drill > 0)
 
 
-def _net_hint_of(pads: list[Pad]) -> str | None:
-    for pad in pads:
-        if pad.net is not None:
-            return pad.net.name
+def _net_hint_of(items: list) -> str | None:
+    for item in items:
+        if item.net is not None:
+            return item.net.name
     return None
 
 
-def get_electrodes(board: Board
+def get_electrodes(board: Board, stackup: StackupInfo | None = None
                    ) -> tuple[list[Electrode], list[Electrode], str | None]:
     """Terminals from the selection. Each terminal may have MULTIPLE parts
     (all merged into one externally-bonded contact):
 
     - rectangles on ELECTRODE_POS_LAYER -> V+ parts, on ELECTRODE_NEG_LAYER
-      -> V- parts; selected pads fill a side that has no rectangles;
+      -> V- parts; selected pads/vias fill a side that has no rectangles;
     - no marker rectangles selected: legacy mode, exactly 2 items
-      (rects/pads, any layer) -> one part each;
+      (rects/pads/vias, any layer) -> one part each;
     - empty selection: board-wide scan of both marker layers.
+
+    Selected vias and through-hole pads become BARREL contacts: current
+    enters at the drill-wall ring (the soldered lead/wire), not the pad
+    face. Draw a marker rectangle over the pad instead to model a probe
+    pressed onto the pad face.
     """
     pos_l = config.ELECTRODE_POS_LAYER
     neg_l = config.ELECTRODE_NEG_LAYER
     scheme = (f"Draw V+ rectangle(s) on {pos_l} and V- rectangle(s) on "
-              f"{neg_l} (axis-aligned), and/or select pads for a side "
+              f"{neg_l} (axis-aligned), and/or select pads/vias for a side "
               f"without rectangles.")
 
     selection = list(board.get_selection())
     rects = [s for s in selection if isinstance(s, BoardRectangle)]
-    pads = [s for s in selection if isinstance(s, Pad)]
+    pads = [s for s in selection if isinstance(s, (Pad, Via))]
 
     if not selection:
         allr = [s for s in board.get_shapes() if isinstance(s, BoardRectangle)]
@@ -258,12 +287,12 @@ def get_electrodes(board: Board
         es2 = [_to_electrode(board, r) for r in neg]
         if pads and es1 and es2:
             raise SelectionError(
-                f"Cannot assign the {len(pads)} selected pad(s): both marker "
-                f"layers already provide rectangles. Use pads only for a "
-                f"side that has none."
+                f"Cannot assign the {len(pads)} selected pad(s)/via(s): both "
+                f"marker layers already provide rectangles. Use pads/vias "
+                f"only for a side that has none."
             )
         if pads:
-            pad_parts = [_to_electrode(board, p) for p in pads]
+            pad_parts = [_to_electrode(board, p, stackup) for p in pads]
             if not es1:
                 es1 = pad_parts
             else:
@@ -277,12 +306,12 @@ def get_electrodes(board: Board
 
     items = rects + pads
     if len(items) == 2:
-        return ([_to_electrode(board, items[0])],
-                [_to_electrode(board, items[1])], _net_hint_of(pads))
+        return ([_to_electrode(board, items[0], stackup)],
+                [_to_electrode(board, items[1], stackup)], _net_hint_of(pads))
     raise SelectionError(
         f"The selection has {len(rects)} rectangle(s) (none on the marker "
-        f"layers) and {len(pads)} pad(s); without marker layers exactly 2 "
-        f"contacts are needed.\n{scheme}"
+        f"layers) and {len(pads)} pad(s)/via(s); without marker layers "
+        f"exactly 2 contacts are needed.\n{scheme}"
     )
 
 
@@ -465,7 +494,8 @@ def build_problem(board: Board, net: str, layer_names: list[str],
                   buildups: dict[str, list[Polygon]] | None = None,
                   extra_cu_um: float | None = None,
                   tracks: dict | None = None,
-                  vias_capped: bool | None = None) -> Problem:
+                  vias_capped: bool | None = None,
+                  cap_max_drill_mm: float | None = None) -> Problem:
     per_layer = fills.get(net, {})
     per_layer_tracks = (tracks or {}).get(net, {})
     layers = []
@@ -502,7 +532,7 @@ def build_problem(board: Board, net: str, layer_names: list[str],
           + (f", solder buildup on "
              f"{', '.join(b.layer_name for b in buildup_list)}"
              if buildup_list else ""))
-    return Problem(
+    problem = Problem(
         board_path=board.name or "",
         net_name=net,
         rho_ohm_m=config.RHO_CU_OHM_M,
@@ -522,7 +552,15 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         vias_capped=(vias_capped if vias_capped is not None
                      else config.VIAS_CAPPED),
         cap_plating_nm=int(config.CAP_PLATING_UM * 1000),
+        cap_max_drill_nm=int((cap_max_drill_mm if cap_max_drill_mm is not None
+                              else config.CAP_MAX_DRILL_MM) * 1e6),
     )
+    solder_layers = contact_solder_buildups(problem)
+    if solder_layers:
+        print(f"THT contact(s): solder-filled hole + "
+              f"{config.SOLDER_THICKNESS_UM:g} um average solder coat on the "
+              f"pad face ({', '.join(solder_layers)})")
+    return problem
 
 
 if __name__ == "__main__":
@@ -533,7 +571,7 @@ if __name__ == "__main__":
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("geometry_dump.json")
     _, board = connect()
     stackup = get_stackup_info(board)
-    es1, es2, net_hint = get_electrodes(board)
+    es1, es2, net_hint = get_electrodes(board, stackup)
     if any_zone_unfilled(board):
         refill(board)
     fills = gather_net_fills(board)

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-JSON_SCHEMA_VERSION = 5
+JSON_SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -93,16 +93,29 @@ class TrackSeg:
 
 @dataclass
 class Electrode:
-    """One PART of a current-injection terminal: a drawn rectangle or a
-    selected pad. A terminal (V+ or V-) is a LIST of parts, all merged
-    into one equipotential contact (externally bonded). `polygons`
-    (board nm) is the exact copper shape when known (pads); None means
-    the rectangle itself is the shape. `contact` = 'all' or a layer
-    name: which included layers this part touches."""
+    """One PART of a current-injection terminal: a drawn rectangle, a
+    selected pad, or a selected via. A terminal (V+ or V-) is a LIST of
+    parts, all merged into one equipotential contact (externally
+    bonded). `polygons` (board nm) is the exact copper shape when known
+    (pads); None means the rectangle itself is the shape. `contact` =
+    'all' or a layer name: which included layers this part touches.
+
+    drill_nm > 0 marks a BARREL contact (selected via or through-hole
+    pad): the current physically enters through the plated barrel (the
+    lead/wire soldered into the hole), so the contact cells are the
+    copper ring at the drill wall, not the whole pad face. `solder`
+    additionally models a soldered THT joint: the hole is filled with
+    solder and the pad face carries an average-thickness solder coat
+    (Problem.solder_thickness_nm over `polygons`)."""
     rect: Rect                                # bounding box (labels/summary)
     contact: str = "all"
     polygons: list[Polygon] | None = None
     label: str = "rect"
+    drill_nm: int = 0                         # >0: barrel contact
+    pad_nm: int = 0                           # pad diameter (search bound)
+    center: tuple[int, int] | None = None     # drill center; None = rect center
+    barrel_z: tuple[int, int] | None = None   # (z_top, z_bot); None = full stack
+    solder: bool = False                      # soldered THT joint (see above)
 
 
 @dataclass
@@ -121,11 +134,18 @@ class ViaLink:
         return self.z_top_nm - 1 <= z_nm <= self.z_bot_nm + 1
 
     def barrel_resistance(self, length_nm: int, rho_ohm_m: float,
-                          plating_nm: int) -> float:
+                          plating_nm: int,
+                          solder_rho_ohm_m: float | None = None) -> float:
         """Barrel segment resistance over length_nm: thin-wall annulus of
-        plating around the drill."""
-        area_m2 = math.pi * (self.drill_nm * 1e-9) * (plating_nm * 1e-9)
-        return rho_ohm_m * (length_nm * 1e-9) / area_m2
+        plating around the drill. With solder_rho_ohm_m the hole is
+        solder-filled (soldered THT joint): the solder core conducts in
+        parallel with the plating."""
+        ga = math.pi * (self.drill_nm * 1e-9) * (plating_nm * 1e-9) \
+            / rho_ohm_m                       # plating conductance-area [m^2/ohm-m]
+        if solder_rho_ohm_m is not None:
+            r_core = max(self.drill_nm / 2.0 - plating_nm, 0.0) * 1e-9
+            ga += math.pi * r_core * r_core / solder_rho_ohm_m
+        return (length_nm * 1e-9) / ga
 
 
 @dataclass
@@ -147,6 +167,9 @@ class Problem:
     vias_capped: bool = True                  # filled+capped vias: thin cap
     cap_plating_nm: int = 15_000              # over outer-layer mouths;
                                               # False = open mouths
+    cap_max_drill_nm: int = 500_000           # fab caps only small vias:
+                                              # drills above this stay open
+                                              # even with vias_capped
 
     @property
     def layer_names(self) -> list[str]:
@@ -171,6 +194,25 @@ class Problem:
         x = np.concatenate(xs)
         y = np.concatenate(ys)
         return int(x.min()), int(y.min()), int(x.max()), int(y.max())
+
+
+def contact_solder_buildups(problem: Problem) -> list[str]:
+    """Soldered THT-joint contacts: the pad face is covered in solder of
+    average thickness solder_thickness_nm. Adds one SurfaceBuildup per
+    outer layer for every `solder` electrode's pad shape (the buildup
+    machinery intersects with actual copper at raster time). Returns the
+    affected layer names. Called once when the problem is built."""
+    included = {l.layer_name for l in problem.layers}
+    outer = [n for n in ("F.Cu", "B.Cu") if n in included]
+    touched = []
+    for e in problem.electrodes1 + problem.electrodes2:
+        if not e.solder or not e.polygons:
+            continue
+        for name in outer:
+            problem.buildups.append(
+                SurfaceBuildup(layer_name=name, polygons=list(e.polygons)))
+            touched.append(name)
+    return sorted(set(touched))
 
 
 def _arc_params(start, mid, end) -> tuple[float, float, float, float, float] | None:
@@ -321,6 +363,11 @@ def _electrode_to_json(e: Electrode) -> dict:
         "label": e.label,
         "polygons": (None if e.polygons is None
                      else [_poly_to_json(poly) for poly in e.polygons]),
+        "drill_nm": e.drill_nm,
+        "pad_nm": e.pad_nm,
+        "center": (None if e.center is None else list(e.center)),
+        "barrel_z": (None if e.barrel_z is None else list(e.barrel_z)),
+        "solder": e.solder,
     }
 
 
@@ -331,6 +378,13 @@ def _electrode_from_json(d: dict) -> Electrode:
         label=d.get("label", "rect"),
         polygons=(None if d.get("polygons") is None
                   else [_poly_from_json(pd) for pd in d["polygons"]]),
+        drill_nm=int(d.get("drill_nm", 0)),
+        pad_nm=int(d.get("pad_nm", 0)),
+        center=(None if d.get("center") is None
+                else (int(d["center"][0]), int(d["center"][1]))),
+        barrel_z=(None if d.get("barrel_z") is None
+                  else (int(d["barrel_z"][0]), int(d["barrel_z"][1]))),
+        solder=bool(d.get("solder", False)),
     )
 
 
@@ -369,6 +423,7 @@ def problem_to_json(p: Problem) -> dict:
         "extra_cu_nm": p.extra_cu_nm,
         "vias_capped": p.vias_capped,
         "cap_plating_nm": p.cap_plating_nm,
+        "cap_max_drill_nm": p.cap_max_drill_nm,
     }
 
 
@@ -442,6 +497,7 @@ def problem_from_json(d: dict) -> Problem:
         ],
         vias_capped=bool(d.get("vias_capped", True)),
         cap_plating_nm=int(d.get("cap_plating_nm", 15_000)),
+        cap_max_drill_nm=int(d.get("cap_max_drill_nm", 500_000)),
     )
 
 

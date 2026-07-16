@@ -178,8 +178,12 @@ def _barrel_links(stack: RasterStack, problem: Problem
             length = problem.layers[lb].z_nm - problem.layers[la].z_nm
             if length <= 0:
                 continue
-            r_dc = via.barrel_resistance(length, problem.rho_ohm_m,
-                                         problem.plating_nm)
+            # THT pads carry a soldered component lead: the hole is
+            # solder-filled, the core conducts in parallel with the plating
+            r_dc = via.barrel_resistance(
+                length, problem.rho_ohm_m, problem.plating_nm,
+                solder_rho_ohm_m=(problem.solder_rho_ohm_m
+                                  if via.kind == "pad" else None))
             links.append((vi, la, ia, ja, lb, ib, jb, r_dc))
     return links, dead
 

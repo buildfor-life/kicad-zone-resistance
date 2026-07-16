@@ -33,7 +33,7 @@ def main() -> None:
         try:
             kicad, board = board_io.connect()
             stackup = board_io.get_stackup_info(board)
-            es1, es2, net_hint = board_io.get_electrodes(board)
+            es1, es2, net_hint = board_io.get_electrodes(board, stackup)
             if board_io.any_zone_unfilled(board) or config.ALWAYS_REFILL:
                 board_io.refill(board)
             fills = board_io.gather_net_fills(board)
@@ -95,7 +95,8 @@ def main() -> None:
                 buildups=(buildups if selection.include_buildup else None),
                 extra_cu_um=selection.extra_cu_um,
                 tracks=(tracks if selection.include_tracks else None),
-                vias_capped=selection.vias_capped)
+                vias_capped=selection.vias_capped,
+                cap_max_drill_mm=selection.cap_max_drill_mm)
             outdir = report.make_output_dir(board_io.board_dir(board))
         except ApiError as e:
             raise UserFacingError(f"KiCad API error: {e}")

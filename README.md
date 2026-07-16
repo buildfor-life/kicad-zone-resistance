@@ -44,9 +44,10 @@ SWIG API. Requires KiCad **10.0.1+**.
    - **V+ rectangles on `User.1`**, **V− rectangles on `User.2`**
      (marker layers, configurable via `ELECTRODE_POS_LAYER` /
      `ELECTRODE_NEG_LAYER`), any number per side, axis-aligned;
-   - **pads** (real copper shape; through-hole pad contacts all layers,
-     SMD pad its own layer) — selected pads fill a side that has no
-     rectangles;
+   - **pads and vias** (SMD pad: real copper shape on its own layer;
+     through-hole pads and vias become **barrel contacts** — the current
+     enters at the drill wall on every spanned layer, see below) —
+     selected pads/vias fill a side that has no rectangles;
    - legacy: exactly 2 selected contacts with no marker rectangles still
      works; empty selection scans the whole board's marker layers.
 2. **Select the contacts**, click the **Fill Resistance** Ω button.
@@ -76,14 +77,19 @@ SWIG API. Requires KiCad **10.0.1+**.
   capped" checkbox** (default on, `VIAS_CAPPED`) the mouth carries a
   thin copper cap (`CAP_PLATING_UM = 15`, fab spec) on the **outer**
   layers and is an open hole on inner layers; unchecked, mouths are open
-  holes everywhere. Layer-to-layer the cap never matters at DC (it is in
+  holes everywhere. The fab caps only small vias: drills above the
+  dialog's **"capped up to drill"** threshold (default
+  `CAP_MAX_DRILL_MM = 0.5`) keep open mouths even with capping
+  selected. Layer-to-layer the cap never matters at DC (it is in
   parallel with the annular-ring contact, not in series) — the checkbox
   only affects in-plane conduction across outer-layer mouths. Sub-cell
   mouths scale their cells' sheet conductance by the true covered
   fraction (4×4 supersampling), so coarse grids see the correct small
   perturbation instead of a whole-cell hole. THT-pad copper and drills
-  remain outside the model; at f > 0 the thickness scaling is applied
-  multiplicatively to the skin-corrected sheet conductance
+  remain outside the model, but THT-pad **barrels are solder-filled**
+  (a soldered component lead): the solder core (SAC305) conducts in
+  parallel with the plating annulus. At f > 0 the thickness scaling is
+  applied multiplicatively to the skin-corrected sheet conductance
   (approximation). Per layer a barrel attaches to
   the fill cell under it, or to the nearest copper cell within the pad
   footprint plus one grid cell — fills joined by **thermal-relief
@@ -110,6 +116,18 @@ SWIG API. Requires KiCad **10.0.1+**.
   interface faces use harmonic-mean conductances. Buildup areas render
   tin-gray on the raster map; |J| in them is referenced to the
   conductance-equivalent copper thickness.
+- **Barrel contacts**: a selected **via or through-hole pad** injects at
+  the **drill-wall ring** on every layer the barrel spans — the current
+  physically enters through the lead/wire soldered into the hole, so
+  the spreading resistance across the pad and surrounding pour is part
+  of the result (both contact models; verified against
+  R = ρ/(π·t)·acosh(d/2a) for two circular contacts on a sheet). A
+  soldered **THT joint** additionally assumes the **hole is filled with
+  solder** (core in parallel with the plating) and the **pad face
+  carries an average-thickness solder coat** (`SOLDER_THICKNESS_UM`,
+  50 µm) over the modeled copper under the pad shape. To model a probe
+  pressed onto the pad face instead, draw a marker rectangle over the
+  pad.
 - **Contact models** (dialog / `CONTACT_MODEL`): default **uniform
   injection** — a conductor pressed on top feeds the current orthogonally
   with uniform surface density, so |J| ramps across the contact area

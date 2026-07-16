@@ -9,10 +9,13 @@ from tests.util import NM, make_multilayer
 
 
 def _two_layer(width_mm=5.0, drill_mm=0.3, pad_mm=0.6, kind="via",
-               capped=True, cap_um=15.0, hole_mm=None):
+               capped=True, cap_um=15.0, hole_mm=None,
+               cap_max_drill_mm=10.0):
     """10 x width strip on both (outer-named) layers, e1 left on F.Cu,
     e2 right on B.Cu, one via mid-strip. Optionally a circular hole in
-    the F.Cu fill around the via (ring-bridging scenario)."""
+    the F.Cu fill around the via (ring-bridging scenario). The cap-drill
+    threshold defaults to 10 mm here (= every drill capped) so the tests
+    exercise the mouth treatment itself; the threshold has its own test."""
     y = width_mm / 2
     strip = [(0, 0), (10, 0), (10, width_mm), (0, width_mm)]
     holes = []
@@ -31,6 +34,7 @@ def _two_layer(width_mm=5.0, drill_mm=0.3, pad_mm=0.6, kind="via",
     p.vias[0].pad_nm = int(pad_mm * NM)
     p.vias_capped = capped
     p.cap_plating_nm = int(cap_um * 1000)
+    p.cap_max_drill_nm = int(cap_max_drill_mm * NM)
     return p
 
 
@@ -46,7 +50,11 @@ def test_cap_at_foil_thickness_is_identity():
     so the result equals the feature-off reference (a 'pad'-kind barrel,
     which skips rings and mouths) with the mouth fully inside copper."""
     r_cap, _ = _solve(_two_layer(capped=True, cap_um=70.0), 0.1)
-    r_ref, _ = _solve(_two_layer(kind="pad"), 0.1)
+    ref = _two_layer(kind="pad")
+    # 'pad' barrels are solder-filled; kill the core so the reference
+    # barrel matches the via's plating-only resistance exactly
+    ref.solder_rho_ohm_m = 1e30
+    r_ref, _ = _solve(ref, 0.1)
     assert r_cap.R_ohm == pytest.approx(r_ref.R_ohm, rel=1e-9)
 
 
@@ -90,14 +98,31 @@ def test_subcell_mouth_perturbs_gently():
     assert r_solid.R_ohm <= r_open.R_ohm <= 1.05 * r_solid.R_ohm
 
 
+def test_cap_drill_threshold():
+    """Drills above cap_max_drill_nm stay open even with capping on: a
+    2 mm drill over a 0.5 mm threshold behaves exactly like uncapped,
+    while a threshold above the drill restores the cap."""
+    kw = dict(drill_mm=2.0, pad_mm=2.6)
+    r_big, s_big = _solve(_two_layer(capped=True, cap_max_drill_mm=0.5,
+                                     **kw), 0.25)
+    r_open, s_open = _solve(_two_layer(capped=False, **kw), 0.25)
+    assert r_big.R_ohm == pytest.approx(r_open.R_ohm, rel=1e-12)
+    assert int(s_big.masks.sum()) == int(s_open.masks.sum())
+
+    r_cap, _ = _solve(_two_layer(capped=True, cap_max_drill_mm=2.1,
+                                 **kw), 0.25)
+    assert r_cap.R_ohm < r_open.R_ohm
+
+
 def test_capping_json_roundtrip(tmp_path):
     from fill_resistance.geometry import load_problem, save_problem
-    p = _two_layer(capped=False, cap_um=12.0)
+    p = _two_layer(capped=False, cap_um=12.0, cap_max_drill_mm=0.8)
     f = tmp_path / "d.json"
     save_problem(p, f)
     q = load_problem(f)
     assert q.vias_capped is False
     assert q.cap_plating_nm == 12_000
+    assert q.cap_max_drill_nm == 800_000
     r_p, _ = _solve(p, 0.25)
     r_q, _ = _solve(q, 0.25)
     assert r_q.R_ohm == pytest.approx(r_p.R_ohm, rel=1e-12)

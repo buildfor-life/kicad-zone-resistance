@@ -42,6 +42,10 @@ def main(argv=None) -> int:
     ap.add_argument("--uncapped", action="store_true",
                     help="treat vias as uncapped (open drill mouths on "
                          "all layers)")
+    ap.add_argument("--cap-max-drill", type=float, default=None,
+                    metavar="MM",
+                    help="cap only vias with drill <= this [mm]; larger "
+                         "drills stay open (default: from the dump)")
     ap.add_argument("--extra-cu-um", type=float, default=None,
                     help="override the added copper in mask openings [um]")
     ap.add_argument("--force-iterative", action="store_true",
@@ -68,6 +72,8 @@ def main(argv=None) -> int:
         problem.buildups = []
     if args.uncapped:
         problem.vias_capped = False
+    if args.cap_max_drill is not None:
+        problem.cap_max_drill_nm = int(args.cap_max_drill * 1e6)
     if args.extra_cu_um is not None:
         problem.extra_cu_nm = int(args.extra_cu_um * 1000)
     if args.layers:

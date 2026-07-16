@@ -28,7 +28,13 @@ VIAS_CAPPED = True              # filled + capped vias (dialog checkbox):
                                 # Ring/pad copper of vias is modeled either
                                 # way; THT-pad copper/drills are not.
 CAP_PLATING_UM = 15.0           # cap plating thickness (fab spec)
-INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too
+CAP_MAX_DRILL_MM = 0.5          # fab caps only small vias: drills above this
+                                # stay open even with VIAS_CAPPED
+                                # (dialog-settable)
+INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too;
+                                # their holes are modeled solder-filled (a
+                                # soldered component lead), so the solder core
+                                # conducts in parallel with the plating
 SKIN_SIDES = 1                  # skin-effect field config: 1 = plane facing a
                                 # return plane (conservative), 2 = isolated foil
 

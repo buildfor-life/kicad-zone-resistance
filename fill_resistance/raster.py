@@ -268,8 +268,10 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
     """Drill-mouth treatment, area-weighted per cell (4x4 supersampling):
     capped vias carry a cap_plating-thin copper cap over the mouth on the
     OUTER layers, uncapped vias (and inner layers either way) get an open
-    hole. Fully swallowed cells leave the mask; partially covered cells
-    keep a thickness-scaled sheet conductance via stack.thick_scale."""
+    hole. The fab caps only small vias: drills above cap_max_drill_nm
+    stay open even with vias_capped. Fully swallowed cells leave the
+    mask; partially covered cells keep a thickness-scaled sheet
+    conductance via stack.thick_scale."""
     ny, nx = stack.shape2d
     h = stack.h_nm
     outer = {li for li, n in enumerate(stack.layer_names)
@@ -296,7 +298,8 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
         if stack.thick_scale is None:
             stack.thick_scale = np.ones(stack.masks.shape)
         for li in _via_span(problem, via):
-            if problem.vias_capped and li in outer:
+            if problem.vias_capped and li in outer \
+                    and via.drill_nm <= problem.cap_max_drill_nm:
                 ratio = min(problem.cap_plating_nm
                             / problem.layers[li].thickness_nm, 1.0)
             else:
@@ -399,26 +402,88 @@ def _electrode_cells2d(stack: RasterStack, e: Electrode) -> np.ndarray:
     return _rect_cells(stack, e.rect)
 
 
+def _barrel_ring2d(stack: RasterStack, e: Electrode,
+                   mask2d: np.ndarray) -> np.ndarray:
+    """Contact cells of a barrel electrode on one layer: the copper ring
+    at the drill wall (cell centers within one cell of radius drill/2),
+    where the lead/wire soldered into the hole actually meets the layer.
+    If rasterization or an antipad leaves no copper there, fall back to
+    the nearest copper ring within the pad footprint (+1 cell of slop) -
+    the same search bound as the solver's barrel attachment."""
+    ny, nx = stack.shape2d
+    h = stack.h_nm
+    if e.center is not None:
+        x, y = e.center
+    else:
+        x = (e.rect.x0 + e.rect.x1) / 2.0
+        y = (e.rect.y0 + e.rect.y1) / 2.0
+    r = e.drill_nm / 2.0
+    rw = max(e.pad_nm, e.drill_nm + 300_000) / 2.0 + h
+    out = np.zeros((ny, nx), dtype=bool)
+    j0 = max(0, math.floor((x - rw - stack.x0_nm) / h))
+    j1 = min(nx, math.floor((x + rw - stack.x0_nm) / h) + 1)
+    i0 = max(0, math.floor((y - rw - stack.y0_nm) / h))
+    i1 = min(ny, math.floor((y + rw - stack.y0_nm) / h) + 1)
+    if i0 >= i1 or j0 >= j1:
+        return out
+    xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - x
+    ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - y
+    d = np.sqrt(ys[:, None] ** 2 + xs[None, :] ** 2)
+    m = mask2d[i0:i1, j0:j1]
+    ring = m & (np.abs(d - r) <= h)
+    if not ring.any():
+        dc = np.where(m & (d <= rw), d, np.inf)
+        dmin = dc.min()
+        if np.isfinite(dmin):
+            ring = dc <= dmin + h              # e.g. thermal-spoke tips
+    out[i0:i1, j0:j1] = ring
+    return out
+
+
+def _part_mask3d(stack: RasterStack, problem: Problem,
+                 el: Electrode) -> np.ndarray:
+    """(L, ny, nx) contact cells of one electrode part: the barrel-wall
+    ring on every spanned layer for via/THT-pad contacts, else the
+    part's shape ∩ copper on its contact layer(s)."""
+    part = np.zeros_like(stack.masks)
+    if el.drill_nm > 0:
+        for li, name in enumerate(stack.layer_names):
+            if el.contact not in ("all", name):
+                continue
+            if el.barrel_z is not None:
+                z = problem.layers[li].z_nm
+                if not (el.barrel_z[0] - 1 <= z <= el.barrel_z[1] + 1):
+                    continue
+            part[li] = _barrel_ring2d(stack, el, stack.masks[li])
+        return part
+    cells2d = _electrode_cells2d(stack, el)
+    for li, name in enumerate(stack.layer_names):
+        if el.contact in ("all", name):
+            part[li] = cells2d & stack.masks[li]
+    return part
+
+
 def electrode_masks(stack: RasterStack, problem: Problem
                     ) -> tuple[np.ndarray, np.ndarray]:
     """Terminal mask = OR over its parts; part = shape ∩ copper on the
-    part's contact layer(s). contact 'all' = every included layer (bolted
-    lug / through pad); a layer name = that layer only. Every part must
-    individually land on copper (clear feedback). V+/V- must not overlap;
-    touching is checked later, only for the equipotential contact model."""
+    part's contact layer(s), or the barrel-wall ring for via/THT-pad
+    contacts (current enters through the soldered barrel, not the pad
+    face). contact 'all' = every included layer (bolted lug / through
+    pad); a layer name = that layer only. Every part must individually
+    land on copper (clear feedback). V+/V- must not overlap; touching is
+    checked later, only for the equipotential contact model."""
     def build(parts: list[Electrode], which: str) -> np.ndarray:
         e = np.zeros_like(stack.masks)
         for el in parts:
-            cells2d = _electrode_cells2d(stack, el)
-            part = np.zeros_like(stack.masks)
-            for li, name in enumerate(stack.layer_names):
-                if el.contact == "all" or el.contact == name:
-                    part[li] = cells2d & stack.masks[li]
+            part = _part_mask3d(stack, problem, el)
             if not part.any():
+                where = ("near its barrel (drill-wall ring / pad footprint)"
+                         if el.drill_nm > 0 else
+                         "(or is smaller than one grid cell)")
                 raise ElectrodeError(
                     f"A {which} contact part ({el.label}) does not overlap "
                     f"any copper of the selected fill on contact layer(s) "
-                    f"'{el.contact}' (or is smaller than one grid cell)."
+                    f"'{el.contact}' {where}."
                 )
             e |= part
         if not e.any():
@@ -446,11 +511,7 @@ def electrode_partition(stack: RasterStack, problem: Problem
         out = []
         claimed = np.zeros_like(stack.masks)
         for el in parts:
-            cells2d = _electrode_cells2d(stack, el)
-            m = np.zeros_like(stack.masks)
-            for li, name in enumerate(stack.layer_names):
-                if el.contact == "all" or el.contact == name:
-                    m[li] = cells2d & stack.masks[li]
+            m = _part_mask3d(stack, problem, el)
             m &= ~claimed
             claimed |= m
             out.append((el.label, m))
