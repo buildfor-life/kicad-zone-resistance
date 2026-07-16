@@ -9,7 +9,8 @@ import pytest
 from fill_resistance import raster, solver
 from fill_resistance.geometry import (Electrode, Polygon, ViaLink,
                                       contact_solder_buildups, load_problem,
-                                      save_problem)
+                                      problem_from_json, problem_to_json,
+                                      save_problem, tht_joint_buildups)
 from tests.util import NM, make_problem, rect_mm, ring_mm
 
 PLATE20 = [(0, 0), (20, 0), (20, 20), (0, 20)]
@@ -193,6 +194,72 @@ def test_lead_fillet_lowers_resistance(monkeypatch):
     monkeypatch.setattr(config, "ADAPTIVE_CELLS", True)
     r_ada, _ = _solve(prob(), 0.1)
     assert r_ada.R_ohm == pytest.approx(r_cone.R_ohm, rel=2e-3)
+
+
+def _pad_link(populated=True):
+    return ViaLink(x=10 * NM, y=10 * NM, drill_nm=1_000_000, z_top_nm=-1,
+                   z_bot_nm=1, kind="pad", pad_nm=2_400_000,
+                   solder_filled=populated,
+                   protrusion_side="F.Cu" if populated else None)
+
+
+def test_stitching_pad_joint():
+    """A populated THT pad on the net (not a contact) gets the full
+    joint: coat discs on the outer layers and a cone on its protrusion
+    side; a DNP pad gets neither."""
+    def prob(populated=True):
+        p = make_problem([(PLATE20, [])],
+                         rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+        p.vias = [_pad_link(populated)]
+        return p
+
+    p = prob()
+    assert tht_joint_buildups(p) == ["F.Cu"]
+    assert len(p.buildups) == 1
+    r_joint, stack = _solve(p, 0.1)
+    assert stack.thick_scale is not None and stack.thick_scale.max() > 3.0
+    assert stack.buildup is not None and stack.buildup.any()
+
+    q = prob(populated=False)
+    assert tht_joint_buildups(q) == []
+    r_bare, s2 = _solve(q, 0.1)
+    assert s2.thick_scale is None and s2.buildup is None
+    assert r_joint.R_ohm < r_bare.R_ohm
+
+
+def test_cone_not_doubled_at_contact():
+    """A contact THT pad also appears in the net's pad list (ViaLink):
+    the cone and coat must be applied once, not squared/stacked."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4, solder=True,
+                             polygons=[_disc(10, 10, 1.2)])]
+    p.electrodes1[0].protrusion_side = "F.Cu"
+    p.vias = [_pad_link()]
+    assert contact_solder_buildups(p) == ["F.Cu"]
+    assert tht_joint_buildups(p) == []       # contact center is skipped
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    wall = 1.0 + p.tht_protrusion_nm \
+        * (p.rho_ohm_m / p.solder_rho_ohm_m) / p.layers[0].thickness_nm
+    assert stack.thick_scale.max() == pytest.approx(wall, rel=1e-12)
+
+
+def test_vialink_solder_json():
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.vias = [_pad_link()]
+    d = problem_to_json(p)
+    q = problem_from_json(d)
+    assert q.vias[0].solder_filled is True
+    assert q.vias[0].protrusion_side == "F.Cu"
+    # legacy dumps without the flag: THT pads counted as solder-filled,
+    # vias as plating-only
+    del d["vias"][0]["solder_filled"], d["vias"][0]["protrusion_side"]
+    q = problem_from_json(d)
+    assert q.vias[0].solder_filled is True
+    assert q.vias[0].protrusion_side is None
+    d["vias"][0]["kind"] = "via"
+    assert problem_from_json(d).vias[0].solder_filled is False
 
 
 def test_barrel_electrode_json_roundtrip(tmp_path):

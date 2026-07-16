@@ -238,9 +238,10 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
 
 
 def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
-    """Protruding THT leads of soldered barrel contacts: the clipped
-    lead sticks tht_protrusion_nm out of the hole on the side opposite
-    the component, wrapped by a solder cone - full protrusion height at
+    """Protruding THT leads (barrel contacts AND the net's populated
+    stitching through-hole pads): the clipped lead sticks
+    tht_protrusion_nm out of the hole on the side opposite the
+    component, wrapped by a solder cone - full protrusion height at
     the drill wall, tapering linearly to zero at the pad edge. Modeled
     as extra conduction-equivalent copper via stack.thick_scale: the
     tall solder column next to the wall pulls those cells to lead
@@ -254,18 +255,32 @@ def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
     ny, nx = stack.shape2d
     h = stack.h_nm
     index = {name: li for li, name in enumerate(stack.layer_names)}
+
+    # one cone per joint: contact electrodes first (exact data), then the
+    # net's populated stitching THT pads, skipping the contacts' barrels
+    jobs = []
+    seen = set()
     for e in problem.electrodes1 + problem.electrodes2:
-        if not (e.solder and e.drill_nm > 0 and e.protrusion_side):
-            continue
-        li = index.get(e.protrusion_side)
-        if li is None or e.pad_nm <= e.drill_nm:
+        if e.drill_nm <= 0:
             continue
         if e.center is not None:
             x, y = e.center
         else:
             x = (e.rect.x0 + e.rect.x1) / 2.0
             y = (e.rect.y0 + e.rect.y1) / 2.0
-        ra, rb = e.drill_nm / 2.0, e.pad_nm / 2.0
+        seen.add((int(x), int(y)))
+        if e.solder and e.protrusion_side:
+            jobs.append((x, y, e.drill_nm, e.pad_nm, e.protrusion_side))
+    for v in problem.vias:
+        if v.kind == "pad" and v.solder_filled and v.protrusion_side \
+                and (v.x, v.y) not in seen:
+            jobs.append((v.x, v.y, v.drill_nm, v.pad_nm, v.protrusion_side))
+
+    for x, y, drill_nm, pad_nm, side in jobs:
+        li = index.get(side)
+        if li is None or pad_nm <= drill_nm:
+            continue
+        ra, rb = drill_nm / 2.0, pad_nm / 2.0
         j0 = max(0, math.floor((x - rb - stack.x0_nm) / h))
         j1 = min(nx, math.floor((x + rb - stack.x0_nm) / h) + 1)
         i0 = max(0, math.floor((y - rb - stack.y0_nm) / h))

@@ -134,6 +134,14 @@ class ViaLink:
     z_bot_nm: int
     kind: str = "via"                         # "via" | "pad"
     pad_nm: int = 0                           # pad/annular diameter; 0 = unknown
+    solder_filled: bool = False               # populated THT pad: the hole is
+                                              # solder-filled (core in parallel
+                                              # with the plating); False for
+                                              # vias and DNP footprints
+    protrusion_side: str | None = None        # populated THT pad: outer layer
+                                              # where the clipped lead tents
+                                              # (solder cone), opposite the
+                                              # component side
 
     def spans(self, z_nm: int) -> bool:
         return self.z_top_nm - 1 <= z_nm <= self.z_bot_nm + 1
@@ -223,6 +231,38 @@ def contact_solder_buildups(problem: Problem) -> list[str]:
         for name in outer:
             problem.buildups.append(
                 SurfaceBuildup(layer_name=name, polygons=list(e.polygons)))
+            touched.append(name)
+    return sorted(set(touched))
+
+
+def _disc_polygon(x_nm: float, y_nm: float, r_nm: float,
+                  n: int = 32) -> Polygon:
+    th = np.linspace(0.0, 2.0 * math.pi, n, endpoint=False)
+    return Polygon(outline=np.round(np.stack(
+        [x_nm + r_nm * np.cos(th), y_nm + r_nm * np.sin(th)],
+        axis=1)).astype(np.int64))
+
+
+def tht_joint_buildups(problem: Problem) -> list[str]:
+    """Solder coat of the net's populated STITCHING through-hole pads
+    (ViaLink kind 'pad' with solder_filled): one pad-diameter disc per
+    outer layer - the exact pad shape is unknown for non-contact pads,
+    and the coat intersects the modeled copper at raster time anyway.
+    Contact pads are skipped: contact_solder_buildups already coats
+    them with the exact pad shape. Returns the affected layer names."""
+    included = {l.layer_name for l in problem.layers}
+    outer = [n for n in ("F.Cu", "B.Cu") if n in included]
+    contacts = {e.center for e in problem.electrodes1 + problem.electrodes2
+                if e.drill_nm > 0 and e.center is not None}
+    touched = []
+    for v in problem.vias:
+        if v.kind != "pad" or not v.solder_filled \
+                or v.pad_nm <= v.drill_nm or (v.x, v.y) in contacts:
+            continue
+        disc = _disc_polygon(v.x, v.y, v.pad_nm / 2.0)
+        for name in outer:
+            problem.buildups.append(
+                SurfaceBuildup(layer_name=name, polygons=[disc]))
             touched.append(name)
     return sorted(set(touched))
 
@@ -485,7 +525,11 @@ def problem_from_json(d: dict) -> Problem:
             ViaLink(x=int(vd["x"]), y=int(vd["y"]), drill_nm=int(vd["drill_nm"]),
                     z_top_nm=int(vd["z_top_nm"]), z_bot_nm=int(vd["z_bot_nm"]),
                     kind=vd.get("kind", "via"),
-                    pad_nm=int(vd.get("pad_nm", 0)))
+                    pad_nm=int(vd.get("pad_nm", 0)),
+                    # older dumps: every THT pad counted as solder-filled
+                    solder_filled=bool(vd.get(
+                        "solder_filled", vd.get("kind", "via") == "pad")),
+                    protrusion_side=vd.get("protrusion_side"))
             for vd in d["vias"]
         ],
         electrodes1=(

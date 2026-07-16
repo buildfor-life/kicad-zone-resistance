@@ -85,11 +85,18 @@ SWIG API. Requires KiCad **10.0.1+**.
   only affects in-plane conduction across outer-layer mouths. Sub-cell
   mouths scale their cells' sheet conductance by the true covered
   fraction (4×4 supersampling), so coarse grids see the correct small
-  perturbation instead of a whole-cell hole. THT-pad copper and drills
-  remain outside the model, but THT-pad **barrels are solder-filled**
-  (a soldered component lead): the solder core (SAC305) conducts in
-  parallel with the plating annulus. At f > 0 the thickness scaling is
-  applied multiplicatively to the skin-corrected sheet conductance
+  perturbation instead of a whole-cell hole. Barrels are gathered in
+  **single-layer runs too** (drill mouths perforate a lone plane).
+  THT-pad copper and drills remain outside the model, but every
+  **populated THT pad** of the net carries its full **soldered
+  joint**: a solder-filled barrel (SAC305 core in parallel with the
+  plating), the average-thickness solder coat over a pad-diameter disc
+  on the outer layers, and the protruding-lead cone on the side
+  opposite its footprint (see barrel contacts below). Whether a hole
+  is a via or a THT pad, the owning footprint's side, and its **Do not
+  populate** flag are all read from KiCad — DNP pads stay plating-only
+  with no joint. At f > 0 the thickness scaling is applied
+  multiplicatively to the skin-corrected sheet conductance
   (approximation). Per layer a barrel attaches to
   the fill cell under it, or to the nearest copper cell within the pad
   footprint plus one grid cell — fills joined by **thermal-relief

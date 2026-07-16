@@ -23,7 +23,8 @@ from . import config
 from .errors import ApiVersionError, CandidateError, SelectionError
 from .geometry import (Electrode, LayerFill, Polygon, Problem, Rect,
                        SurfaceBuildup, TrackSeg, ViaLink,
-                       contact_solder_buildups, linearize_ring)
+                       contact_solder_buildups, linearize_ring,
+                       tht_joint_buildups)
 
 MASK_TO_COPPER = {"F.Mask": "F.Cu", "B.Mask": "B.Cu"}
 
@@ -180,29 +181,42 @@ def _pad_polygons(board: Board, pad: Pad, contact: str) -> list[Polygon] | None:
     return None
 
 
-def _tht_protrusion_side(pad: Pad, footprints) -> str:
-    """Outer layer where the clipped THT lead protrudes (tent + solder
-    cone): the side OPPOSITE the component. Footprint pads are stored
-    with absolute positions, so the owning footprint is matched by pad
-    number + position. Unknown owner -> assume the component sits on
-    F.Cu (lead tents on B.Cu)."""
-    try:
-        for fp in footprints or []:
+def _footprint_pad_map(footprints) -> dict:
+    """(x, y, number) -> owning FootprintInstance. Footprint pads are
+    stored with absolute positions, so the lookup is exact."""
+    out = {}
+    for fp in footprints or []:
+        try:
             for fpad in fp.definition.pads:
-                if fpad.number == pad.number \
-                        and fpad.position.x == pad.position.x \
-                        and fpad.position.y == pad.position.y:
-                    side = canonical_name(fp.layer)
-                    return "F.Cu" if side == "B.Cu" else "B.Cu"
-    except Exception:
-        pass
-    print(f"note: no footprint found for pad {pad.number} - assuming its "
-          f"lead protrudes on B.Cu")
+                out[(fpad.position.x, fpad.position.y, fpad.number)] = fp
+        except Exception:
+            continue
+    return out
+
+
+def _pad_owner(pad: Pad, pad_map: dict):
+    return pad_map.get((pad.position.x, pad.position.y, pad.number))
+
+
+def _tht_protrusion_side(pad: Pad, pad_map: dict, quiet: bool = False) -> str:
+    """Outer layer where the clipped THT lead protrudes (tent + solder
+    cone): the side OPPOSITE the component. Unknown owner -> assume the
+    component sits on F.Cu (lead tents on B.Cu)."""
+    fp = _pad_owner(pad, pad_map)
+    if fp is not None:
+        try:
+            side = canonical_name(fp.layer)
+            return "F.Cu" if side == "B.Cu" else "B.Cu"
+        except Exception:
+            pass
+    if not quiet:
+        print(f"note: no footprint found for pad {pad.number} - assuming "
+              f"its lead protrudes on B.Cu")
     return "B.Cu"
 
 
 def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
-                  footprints=None) -> Electrode:
+                  pad_map: dict | None = None) -> Electrode:
     if isinstance(item, BoardRectangle):
         tl, br = item.top_left, item.bottom_right
         rect = Rect.normalized(tl.x, tl.y, br.x, br.y,
@@ -245,7 +259,7 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
                      drill_nm=drill, pad_nm=_padstack_pad_nm(pad),
                      center=(pad.position.x, pad.position.y),
                      solder=drill > 0,
-                     protrusion_side=(_tht_protrusion_side(pad, footprints)
+                     protrusion_side=(_tht_protrusion_side(pad, pad_map or {})
                                       if drill > 0 else None))
 
 
@@ -282,9 +296,9 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
     rects = [s for s in selection if isinstance(s, BoardRectangle)]
     pads = [s for s in selection if isinstance(s, (Pad, Via))]
     # protrusion-side lookup needs the owning footprints (THT pads only)
-    footprints = (board.get_footprints()
-                  if any(isinstance(s, Pad) and _pad_drill_nm(s) > 0
-                         for s in pads) else None)
+    pad_map = (_footprint_pad_map(board.get_footprints())
+               if any(isinstance(s, Pad) and _pad_drill_nm(s) > 0
+                      for s in pads) else {})
 
     if not selection:
         allr = [s for s in board.get_shapes() if isinstance(s, BoardRectangle)]
@@ -320,7 +334,7 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
                 f"only for a side that has none."
             )
         if pads:
-            pad_parts = [_to_electrode(board, p, stackup, footprints)
+            pad_parts = [_to_electrode(board, p, stackup, pad_map)
                          for p in pads]
             if not es1:
                 es1 = pad_parts
@@ -335,8 +349,8 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
 
     items = rects + pads
     if len(items) == 2:
-        return ([_to_electrode(board, items[0], stackup, footprints)],
-                [_to_electrode(board, items[1], stackup, footprints)],
+        return ([_to_electrode(board, items[0], stackup, pad_map)],
+                [_to_electrode(board, items[1], stackup, pad_map)],
                 _net_hint_of(pads))
     raise SelectionError(
         f"The selection has {len(rects)} rectangle(s) (none on the marker "
@@ -503,16 +517,35 @@ def gather_barrels(board: Board, net_name: str,
                                z_bot_nm=z_bot, kind="via",
                                pad_nm=_padstack_pad_nm(via)))
     if config.INCLUDE_TH_PADS:
-        for pad in board.get_pads():
-            if pad.net is None or pad.net.name != net_name:
-                continue
-            drill = _pad_drill_nm(pad)
-            if drill <= 0:
-                continue
-            barrels.append(ViaLink(x=pad.position.x, y=pad.position.y,
-                                   drill_nm=drill, z_top_nm=-1,
-                                   z_bot_nm=stackup.z_bot_nm + 1, kind="pad",
-                                   pad_nm=_padstack_pad_nm(pad)))
+        net_pads = [pad for pad in board.get_pads()
+                    if pad.net is not None and pad.net.name == net_name
+                    and _pad_drill_nm(pad) > 0]
+        # populated (non-DNP) THT pads carry a soldered joint: filled
+        # hole + coat + lead cone on the side opposite the component
+        pad_map = (_footprint_pad_map(board.get_footprints())
+                   if net_pads else {})
+        unknown = 0
+        for pad in net_pads:
+            fp = _pad_owner(pad, pad_map)
+            unknown += fp is None
+            populated = True
+            if fp is not None:
+                try:
+                    populated = not fp.attributes.do_not_populate
+                except Exception:
+                    pass
+            barrels.append(ViaLink(
+                x=pad.position.x, y=pad.position.y,
+                drill_nm=_pad_drill_nm(pad), z_top_nm=-1,
+                z_bot_nm=stackup.z_bot_nm + 1, kind="pad",
+                pad_nm=_padstack_pad_nm(pad),
+                solder_filled=populated,
+                protrusion_side=(_tht_protrusion_side(pad, pad_map,
+                                                      quiet=True)
+                                 if populated else None)))
+        if unknown:
+            print(f"note: {unknown} THT pad(s) without an identifiable "
+                  f"footprint - assumed populated, leads on B.Cu")
     return barrels
 
 
@@ -550,7 +583,9 @@ def build_problem(board: Board, net: str, layer_names: list[str],
             f"Net {net} has no fill on any of the selected layers "
             f"({', '.join(layer_names)})."
         )
-    vias = gather_barrels(board, net, stackup) if len(layers) > 1 else []
+    # barrels matter on a single layer too: via rings + drill mouths
+    # perforate the plane, THT joints locally stiffen it
+    vias = gather_barrels(board, net, stackup)
     included = {l.layer_name for l in layers}
     buildup_list = [
         SurfaceBuildup(layer_name=name, polygons=polys)
@@ -597,6 +632,15 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         print(f"THT contact(s): solder-filled hole + "
               f"{config.SOLDER_THICKNESS_UM:g} um average solder coat on the "
               f"pad face ({', '.join(solder_layers)}){cone}")
+    tht_joint_buildups(problem)
+    n_joint = sum(1 for v in problem.vias
+                  if v.kind == "pad" and v.solder_filled)
+    n_dnp = sum(1 for v in problem.vias
+                if v.kind == "pad" and not v.solder_filled)
+    if n_joint or n_dnp:
+        print(f"{n_joint} populated THT pad joint(s): solder-filled hole + "
+              f"coat + lead cone"
+              + (f"; {n_dnp} DNP pad(s) plating-only" if n_dnp else ""))
     return problem
 
 
