@@ -105,8 +105,10 @@ class Electrode:
     lead/wire soldered into the hole), so the contact cells are the
     copper ring at the drill wall, not the whole pad face. `solder`
     additionally models a soldered THT joint: the hole is filled with
-    solder and the pad face carries an average-thickness solder coat
-    (Problem.solder_thickness_nm over `polygons`)."""
+    solder and the pad face on the SOLDER side (protrusion_side,
+    opposite the component) carries an average-thickness solder coat
+    (Problem.solder_thickness_nm over `polygons`) plus the
+    protruding-lead cone."""
     rect: Rect                                # bounding box (labels/summary)
     contact: str = "all"
     polygons: list[Polygon] | None = None
@@ -217,21 +219,23 @@ class Problem:
 
 
 def contact_solder_buildups(problem: Problem) -> list[str]:
-    """Soldered THT-joint contacts: the pad face is covered in solder of
-    average thickness solder_thickness_nm. Adds one SurfaceBuildup per
-    outer layer for every `solder` electrode's pad shape (the buildup
-    machinery intersects with actual copper at raster time). Returns the
-    affected layer names. Called once when the problem is built."""
+    """Soldered THT-joint contacts: the pad face on the SOLDER side (the
+    protrusion side, opposite the component - the component-side face
+    stays bare) is covered in solder of average thickness
+    solder_thickness_nm. Adds one SurfaceBuildup there for every
+    `solder` electrode's pad shape (the buildup machinery intersects
+    with actual copper at raster time). Returns the affected layer
+    names. Called once when the problem is built."""
     included = {l.layer_name for l in problem.layers}
-    outer = [n for n in ("F.Cu", "B.Cu") if n in included]
     touched = []
     for e in problem.electrodes1 + problem.electrodes2:
-        if not e.solder or not e.polygons:
+        if not e.solder or not e.polygons \
+                or e.protrusion_side not in included:
             continue
-        for name in outer:
-            problem.buildups.append(
-                SurfaceBuildup(layer_name=name, polygons=list(e.polygons)))
-            touched.append(name)
+        problem.buildups.append(
+            SurfaceBuildup(layer_name=e.protrusion_side,
+                           polygons=list(e.polygons)))
+        touched.append(e.protrusion_side)
     return sorted(set(touched))
 
 
@@ -245,25 +249,26 @@ def _disc_polygon(x_nm: float, y_nm: float, r_nm: float,
 
 def tht_joint_buildups(problem: Problem) -> list[str]:
     """Solder coat of the net's populated STITCHING through-hole pads
-    (ViaLink kind 'pad' with solder_filled): one pad-diameter disc per
-    outer layer - the exact pad shape is unknown for non-contact pads,
-    and the coat intersects the modeled copper at raster time anyway.
-    Contact pads are skipped: contact_solder_buildups already coats
-    them with the exact pad shape. Returns the affected layer names."""
+    (ViaLink kind 'pad' with solder_filled): one pad-diameter disc on
+    the pad's SOLDER side (the protrusion side, opposite the component;
+    the component-side face stays bare). The exact pad shape is unknown
+    for non-contact pads, and the coat intersects the modeled copper at
+    raster time anyway. Contact pads are skipped:
+    contact_solder_buildups already coats them with the exact pad
+    shape. Returns the affected layer names."""
     included = {l.layer_name for l in problem.layers}
-    outer = [n for n in ("F.Cu", "B.Cu") if n in included]
     contacts = {e.center for e in problem.electrodes1 + problem.electrodes2
                 if e.drill_nm > 0 and e.center is not None}
     touched = []
     for v in problem.vias:
         if v.kind != "pad" or not v.solder_filled \
-                or v.pad_nm <= v.drill_nm or (v.x, v.y) in contacts:
+                or v.pad_nm <= v.drill_nm or (v.x, v.y) in contacts \
+                or v.protrusion_side not in included:
             continue
         disc = _disc_polygon(v.x, v.y, v.pad_nm / 2.0)
-        for name in outer:
-            problem.buildups.append(
-                SurfaceBuildup(layer_name=name, polygons=[disc]))
-            touched.append(name)
+        problem.buildups.append(
+            SurfaceBuildup(layer_name=v.protrusion_side, polygons=[disc]))
+        touched.append(v.protrusion_side)
     return sorted(set(touched))
 
 

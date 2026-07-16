@@ -89,10 +89,11 @@ SWIG API. Requires KiCad **10.0.1+**.
   **single-layer runs too** (drill mouths perforate a lone plane).
   THT-pad copper and drills remain outside the model, but every
   **populated THT pad** of the net carries its full **soldered
-  joint**: a solder-filled barrel (SAC305 core in parallel with the
-  plating), the average-thickness solder coat over a pad-diameter disc
-  on the outer layers, and the protruding-lead cone on the side
-  opposite its footprint (see barrel contacts below). Whether a hole
+  joint** on its SOLDER side (opposite the component; the
+  component-side pad face stays bare): a solder-filled barrel (SAC305
+  core in parallel with the plating), the average-thickness solder
+  coat over a pad-diameter disc, and the protruding-lead cone (see
+  barrel contacts below). Whether a hole
   is a via or a THT pad, the owning footprint's side, and its **Do not
   populate** flag are all read from KiCad — DNP pads stay plating-only
   with no joint. At f > 0 the thickness scaling is applied
@@ -130,12 +131,14 @@ SWIG API. Requires KiCad **10.0.1+**.
   of the result (both contact models; verified against
   R = ρ/(π·t)·acosh(d/2a) for two circular contacts on a sheet). A
   soldered **THT joint** additionally assumes the **hole is filled with
-  solder** (core in parallel with the plating) and the **pad face
-  carries an average-thickness solder coat** (`SOLDER_THICKNESS_UM`,
-  50 µm) over the modeled copper under the pad shape. The **clipped
-  lead protrudes** `THT_LEAD_PROTRUSION_MM` (1.5 mm, 0 = off) on the
-  side opposite the component (taken from the owning footprint;
-  assumed `B.Cu` if it cannot be found) and a **solder cone** wraps
+  solder** (core in parallel with the plating) and the **pad face on
+  the solder side carries an average-thickness solder coat**
+  (`SOLDER_THICKNESS_UM`, 50 µm) over the modeled copper under the pad
+  shape — the solder side is the side opposite the component (taken
+  from the owning footprint; assumed `B.Cu` if it cannot be found),
+  and the component-side pad face stays bare. There the **clipped
+  lead protrudes** `THT_LEAD_PROTRUSION_MM` (1.5 mm, 0 = off)
+  and a **solder cone** wraps
   it: full protrusion height at the drill wall, tapering linearly to
   zero at the pad edge, applied as extra conduction-equivalent copper
   per cell. The tall solder column at the wall pulls the joint

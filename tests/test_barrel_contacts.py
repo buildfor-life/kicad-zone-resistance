@@ -125,14 +125,20 @@ def test_solder_filled_barrel_resistance():
 
 def test_contact_solder_coat():
     """A soldered THT contact adds an average-thickness solder buildup
-    over the pad face on the outer layers, lowering the spreading
-    resistance vs the bare barrel contact."""
+    over the pad face on its SOLDER side only (opposite the component),
+    lowering the spreading resistance vs the bare barrel contact."""
     def prob():
         p = make_problem([(PLATE20, [])],
                          rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
         p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4,
                                  solder=True, polygons=[_disc(10, 10, 1.2)])]
+        p.electrodes1[0].protrusion_side = "F.Cu"
         return p
+
+    # solder side not among the included layers -> no coat there
+    q = prob()
+    q.electrodes1[0].protrusion_side = "B.Cu"
+    assert contact_solder_buildups(q) == []
 
     p = prob()
     assert contact_solder_buildups(p) == ["F.Cu"]
