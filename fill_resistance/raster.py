@@ -270,11 +270,14 @@ def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
             y = (e.rect.y0 + e.rect.y1) / 2.0
         seen.add((int(x), int(y)))
         if e.solder and e.protrusion_side:
-            jobs.append((x, y, e.drill_nm, e.pad_nm, e.protrusion_side))
+            # oblong pads: taper to the inscribed circle (conservative)
+            jobs.append((x, y, e.drill_nm, e.pad_min_nm or e.pad_nm,
+                         e.protrusion_side))
     for v in problem.vias:
         if v.kind == "pad" and v.solder_filled and v.protrusion_side \
                 and (v.x, v.y) not in seen:
-            jobs.append((v.x, v.y, v.drill_nm, v.pad_nm, v.protrusion_side))
+            jobs.append((v.x, v.y, v.drill_nm, v.pad_min_nm or v.pad_nm,
+                         v.protrusion_side))
 
     for x, y, drill_nm, pad_nm, side in jobs:
         li = index.get(side)
@@ -333,16 +336,21 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
     capped vias carry a cap_plating-thin copper cap over the mouth on the
     OUTER layers, uncapped vias (and inner layers either way) get an open
     hole. The fab caps only small vias: drills above cap_max_drill_nm
-    stay open even with vias_capped. Fully swallowed cells leave the
-    mask; partially covered cells keep a thickness-scaled sheet
-    conductance via stack.thick_scale."""
+    stay open even with vias_capped. THT pad mouths: populated pads are
+    solder-filled - the mouth copper stays and stands in for the plug
+    (conservative: the plug's solder is worth far more than the foil);
+    DNP pad holes are cut open on every layer. Fully swallowed cells
+    leave the mask; partially covered cells keep a thickness-scaled
+    sheet conductance via stack.thick_scale."""
     ny, nx = stack.shape2d
     h = stack.h_nm
     outer = {li for li, n in enumerate(stack.layer_names)
              if n in ("F.Cu", "B.Cu")}
     sub = (np.arange(4) + 0.5) / 4.0
     for via in problem.vias:
-        if via.kind != "via" or via.drill_nm <= 0:
+        if via.drill_nm <= 0:
+            continue
+        if via.kind == "pad" and via.solder_filled:
             continue
         r = via.drill_nm / 2.0
         j0 = max(0, math.floor((via.x - r - stack.x0_nm) / h))
@@ -362,12 +370,12 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
         if stack.thick_scale is None:
             stack.thick_scale = np.ones(stack.masks.shape)
         for li in _via_span(problem, via):
-            if problem.vias_capped and li in outer \
+            if via.kind == "via" and problem.vias_capped and li in outer \
                     and via.drill_nm <= problem.cap_max_drill_nm:
                 ratio = min(problem.cap_plating_nm
                             / problem.layers[li].thickness_nm, 1.0)
             else:
-                ratio = 0.0
+                ratio = 0.0                 # open hole (also DNP THT holes)
             s = 1.0 - cov * (1.0 - ratio)
             gone = s <= 1e-9
             stack.masks[li, i0:i1, j0:j1] &= ~gone

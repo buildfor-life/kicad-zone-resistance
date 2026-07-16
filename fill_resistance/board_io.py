@@ -257,6 +257,7 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
                      # barrel; the joint is solder-filled + pad-coated,
                      # with a solder cone around the protruding lead
                      drill_nm=drill, pad_nm=_padstack_pad_nm(pad),
+                     pad_min_nm=_padstack_pad_min_nm(pad),
                      center=(pad.position.x, pad.position.y),
                      solder=drill > 0,
                      protrusion_side=(_tht_protrusion_side(pad, pad_map or {})
@@ -489,6 +490,18 @@ def _padstack_pad_nm(item) -> int:
         return 0
 
 
+def _padstack_pad_min_nm(item) -> int:
+    """Smallest dimension of the (largest) copper pad of a padstack; 0
+    if unknown. Bounds the lead-cone taper on oblong pads: the cone
+    stays within the inscribed circle."""
+    try:
+        sizes = [min(int(l.size.x), int(l.size.y))
+                 for l in item.padstack.copper_layers]
+        return max(sizes) if sizes else 0
+    except Exception:
+        return 0
+
+
 def _padstack_span(padstack, stackup: StackupInfo) -> tuple[int, int]:
     """(z_top, z_bot) of the barrel; falls back to the full stack."""
     try:
@@ -539,6 +552,7 @@ def gather_barrels(board: Board, net_name: str,
                 drill_nm=_pad_drill_nm(pad), z_top_nm=-1,
                 z_bot_nm=stackup.z_bot_nm + 1, kind="pad",
                 pad_nm=_padstack_pad_nm(pad),
+                pad_min_nm=_padstack_pad_min_nm(pad),
                 solder_filled=populated,
                 protrusion_side=(_tht_protrusion_side(pad, pad_map,
                                                       quiet=True)
@@ -547,6 +561,25 @@ def gather_barrels(board: Board, net_name: str,
             print(f"note: {unknown} THT pad(s) without an identifiable "
                   f"footprint - assumed populated, leads on B.Cu")
     return barrels
+
+
+def gather_tht_pad_copper(board: Board, net_name: str
+                          ) -> dict[tuple[int, int], list[Polygon]]:
+    """(x, y) -> exact copper shape(s) of every drilled (THT) pad on the
+    net. The annular-ring copper conducts on every layer the barrel
+    spans, so build_problem stamps these onto each included layer. One
+    API call per pad; the outer-layer shape stands in for the inner
+    rings (approximation - inner rings are usually the same or
+    smaller)."""
+    shapes: dict[tuple[int, int], list[Polygon]] = {}
+    for pad in board.get_pads():
+        if pad.net is None or pad.net.name != net_name \
+                or _pad_drill_nm(pad) <= 0:
+            continue
+        polys = _pad_polygons(board, pad, "all")
+        if polys:
+            shapes[(pad.position.x, pad.position.y)] = polys
+    return shapes
 
 
 # --- top level ----------------------------------------------------------------
@@ -586,6 +619,16 @@ def build_problem(board: Board, net: str, layer_names: list[str],
     # barrels matter on a single layer too: via rings + drill mouths
     # perforate the plane, THT joints locally stiffen it
     vias = gather_barrels(board, net, stackup)
+    # THT pad copper is part of the conductor: stamp the exact pad
+    # shapes onto every included layer (the barrel spans the stack)
+    pad_shapes = (gather_tht_pad_copper(board, net)
+                  if any(v.kind == "pad" for v in vias) else {})
+    if pad_shapes:
+        extra = [poly for polys in pad_shapes.values() for poly in polys]
+        for layer in layers:
+            layer.polygons = list(layer.polygons) + extra
+        print(f"{len(pad_shapes)} THT pad shape(s) stamped on every "
+              f"included layer")
     included = {l.layer_name for l in layers}
     buildup_list = [
         SurfaceBuildup(layer_name=name, polygons=polys)
@@ -620,6 +663,8 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         cap_max_drill_nm=int((cap_max_drill_mm if cap_max_drill_mm is not None
                               else config.CAP_MAX_DRILL_MM) * 1e6),
         tht_protrusion_nm=int(config.THT_LEAD_PROTRUSION_MM * 1e6),
+        tht_lead_clearance_nm=int(config.THT_LEAD_CLEARANCE_MM * 1e6),
+        tht_lead_rho_ohm_m=config.THT_LEAD_RHO_OHM_M,
     )
     solder_layers = contact_solder_buildups(problem)
     if solder_layers:
@@ -632,15 +677,16 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         print(f"THT contact(s): solder-filled hole + "
               f"{config.SOLDER_THICKNESS_UM:g} um average solder coat on the "
               f"pad face ({', '.join(solder_layers)}){cone}")
-    tht_joint_buildups(problem)
+    tht_joint_buildups(problem, pad_shapes)
     n_joint = sum(1 for v in problem.vias
                   if v.kind == "pad" and v.solder_filled)
     n_dnp = sum(1 for v in problem.vias
                 if v.kind == "pad" and not v.solder_filled)
     if n_joint or n_dnp:
-        print(f"{n_joint} populated THT pad joint(s): solder-filled hole + "
-              f"coat + lead cone"
-              + (f"; {n_dnp} DNP pad(s) plating-only" if n_dnp else ""))
+        print(f"{n_joint} populated THT pad joint(s): lead + solder in the "
+              f"hole, coat + cone on the solder side"
+              + (f"; {n_dnp} DNP pad(s): open hole, plating-only"
+                 if n_dnp else ""))
     return problem
 
 

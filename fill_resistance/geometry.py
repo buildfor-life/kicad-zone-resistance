@@ -114,7 +114,10 @@ class Electrode:
     polygons: list[Polygon] | None = None
     label: str = "rect"
     drill_nm: int = 0                         # >0: barrel contact
-    pad_nm: int = 0                           # pad diameter (search bound)
+    pad_nm: int = 0                           # pad diameter (search bound;
+                                              # largest dimension if oblong)
+    pad_min_nm: int = 0                       # smallest pad dimension (cone
+                                              # taper bound); 0 = pad_nm
     center: tuple[int, int] | None = None     # drill center; None = rect center
     barrel_z: tuple[int, int] | None = None   # (z_top, z_bot); None = full stack
     solder: bool = False                      # soldered THT joint (see above)
@@ -136,8 +139,13 @@ class ViaLink:
     z_bot_nm: int
     kind: str = "via"                         # "via" | "pad"
     pad_nm: int = 0                           # pad/annular diameter; 0 = unknown
-    solder_filled: bool = False               # populated THT pad: the hole is
-                                              # solder-filled (core in parallel
+                                              # (oblong pads: LARGEST dimension,
+                                              # used as a search bound)
+    pad_min_nm: int = 0                       # smallest pad dimension (bounds
+                                              # the lead-cone taper on oblong
+                                              # pads); 0 = same as pad_nm
+    solder_filled: bool = False               # populated THT pad: the hole
+                                              # holds lead + solder (in parallel
                                               # with the plating); False for
                                               # vias and DNP footprints
     protrusion_side: str | None = None        # populated THT pad: outer layer
@@ -150,16 +158,23 @@ class ViaLink:
 
     def barrel_resistance(self, length_nm: int, rho_ohm_m: float,
                           plating_nm: int,
-                          solder_rho_ohm_m: float | None = None) -> float:
+                          solder_rho_ohm_m: float | None = None,
+                          lead_nm: float = 0,
+                          lead_rho_ohm_m: float | None = None) -> float:
         """Barrel segment resistance over length_nm: thin-wall annulus of
-        plating around the drill. With solder_rho_ohm_m the hole is
-        solder-filled (soldered THT joint): the solder core conducts in
-        parallel with the plating."""
+        plating around the drill. With solder_rho_ohm_m the hole holds a
+        soldered THT joint: the component lead (a cylinder of lead_nm
+        diameter, resistivity lead_rho_ohm_m) and the solder filling the
+        remaining annulus conduct in parallel with the plating."""
         ga = math.pi * (self.drill_nm * 1e-9) * (plating_nm * 1e-9) \
-            / rho_ohm_m                       # plating conductance-area [m^2/ohm-m]
+            / rho_ohm_m                       # conductance-area [m^2/ohm-m]
         if solder_rho_ohm_m is not None:
             r_core = max(self.drill_nm / 2.0 - plating_nm, 0.0) * 1e-9
-            ga += math.pi * r_core * r_core / solder_rho_ohm_m
+            r_lead = min(lead_nm * 1e-9 / 2.0, r_core)
+            if lead_rho_ohm_m is not None and r_lead > 0:
+                ga += math.pi * r_lead * r_lead / lead_rho_ohm_m
+            ga += math.pi * (r_core * r_core - r_lead * r_lead) \
+                / solder_rho_ohm_m
         return (length_nm * 1e-9) / ga
 
 
@@ -192,6 +207,13 @@ class Problem:
                                               # wraps the lead on each solder
                                               # contact's protrusion_side;
                                               # 0 disables the cones
+    tht_lead_clearance_nm: int = 250_000      # hole minus lead diameter (fab
+                                              # rule): the lead cylinder of
+                                              # drill - this conducts inside
+                                              # every solder-filled hole
+    tht_lead_rho_ohm_m: float = 1.68e-8       # lead material resistivity
+                                              # (copper; brass ~6.4e-8,
+                                              # copper-clad steel higher)
 
     @property
     def layer_names(self) -> list[str]:
@@ -247,27 +269,33 @@ def _disc_polygon(x_nm: float, y_nm: float, r_nm: float,
         axis=1)).astype(np.int64))
 
 
-def tht_joint_buildups(problem: Problem) -> list[str]:
+def tht_joint_buildups(problem: Problem,
+                       shapes: dict | None = None) -> list[str]:
     """Solder coat of the net's populated STITCHING through-hole pads
-    (ViaLink kind 'pad' with solder_filled): one pad-diameter disc on
-    the pad's SOLDER side (the protrusion side, opposite the component;
-    the component-side face stays bare). The exact pad shape is unknown
-    for non-contact pads, and the coat intersects the modeled copper at
-    raster time anyway. Contact pads are skipped:
-    contact_solder_buildups already coats them with the exact pad
-    shape. Returns the affected layer names."""
+    (ViaLink kind 'pad' with solder_filled), on the pad's SOLDER side
+    (the protrusion side, opposite the component; the component-side
+    face stays bare). `shapes` maps (x, y) to the exact pad polygons
+    (fetched from KiCad); pads without one fall back to a pad-diameter
+    disc. Contact pads are skipped: contact_solder_buildups already
+    coats them with the exact pad shape. Returns the affected layer
+    names."""
     included = {l.layer_name for l in problem.layers}
     contacts = {e.center for e in problem.electrodes1 + problem.electrodes2
                 if e.drill_nm > 0 and e.center is not None}
     touched = []
     for v in problem.vias:
         if v.kind != "pad" or not v.solder_filled \
-                or v.pad_nm <= v.drill_nm or (v.x, v.y) in contacts \
+                or (v.x, v.y) in contacts \
                 or v.protrusion_side not in included:
             continue
-        disc = _disc_polygon(v.x, v.y, v.pad_nm / 2.0)
+        polys = (shapes or {}).get((v.x, v.y))
+        if polys is None:
+            if v.pad_nm <= v.drill_nm:
+                continue
+            polys = [_disc_polygon(v.x, v.y, v.pad_nm / 2.0)]
         problem.buildups.append(
-            SurfaceBuildup(layer_name=v.protrusion_side, polygons=[disc]))
+            SurfaceBuildup(layer_name=v.protrusion_side,
+                           polygons=list(polys)))
         touched.append(v.protrusion_side)
     return sorted(set(touched))
 
@@ -422,6 +450,7 @@ def _electrode_to_json(e: Electrode) -> dict:
                      else [_poly_to_json(poly) for poly in e.polygons]),
         "drill_nm": e.drill_nm,
         "pad_nm": e.pad_nm,
+        "pad_min_nm": e.pad_min_nm,
         "center": (None if e.center is None else list(e.center)),
         "barrel_z": (None if e.barrel_z is None else list(e.barrel_z)),
         "solder": e.solder,
@@ -438,6 +467,7 @@ def _electrode_from_json(d: dict) -> Electrode:
                   else [_poly_from_json(pd) for pd in d["polygons"]]),
         drill_nm=int(d.get("drill_nm", 0)),
         pad_nm=int(d.get("pad_nm", 0)),
+        pad_min_nm=int(d.get("pad_min_nm", 0)),
         center=(None if d.get("center") is None
                 else (int(d["center"][0]), int(d["center"][1]))),
         barrel_z=(None if d.get("barrel_z") is None
@@ -484,6 +514,8 @@ def problem_to_json(p: Problem) -> dict:
         "cap_plating_nm": p.cap_plating_nm,
         "cap_max_drill_nm": p.cap_max_drill_nm,
         "tht_protrusion_nm": p.tht_protrusion_nm,
+        "tht_lead_clearance_nm": p.tht_lead_clearance_nm,
+        "tht_lead_rho_ohm_m": p.tht_lead_rho_ohm_m,
     }
 
 
@@ -531,6 +563,7 @@ def problem_from_json(d: dict) -> Problem:
                     z_top_nm=int(vd["z_top_nm"]), z_bot_nm=int(vd["z_bot_nm"]),
                     kind=vd.get("kind", "via"),
                     pad_nm=int(vd.get("pad_nm", 0)),
+                    pad_min_nm=int(vd.get("pad_min_nm", 0)),
                     # older dumps: every THT pad counted as solder-filled
                     solder_filled=bool(vd.get(
                         "solder_filled", vd.get("kind", "via") == "pad")),
@@ -563,6 +596,8 @@ def problem_from_json(d: dict) -> Problem:
         cap_plating_nm=int(d.get("cap_plating_nm", 15_000)),
         cap_max_drill_nm=int(d.get("cap_max_drill_nm", 500_000)),
         tht_protrusion_nm=int(d.get("tht_protrusion_nm", 1_500_000)),
+        tht_lead_clearance_nm=int(d.get("tht_lead_clearance_nm", 250_000)),
+        tht_lead_rho_ohm_m=float(d.get("tht_lead_rho_ohm_m", 1.68e-8)),
     )
 
 

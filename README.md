@@ -87,17 +87,24 @@ SWIG API. Requires KiCad **10.0.1+**.
   fraction (4×4 supersampling), so coarse grids see the correct small
   perturbation instead of a whole-cell hole. Barrels are gathered in
   **single-layer runs too** (drill mouths perforate a lone plane).
-  THT-pad copper and drills remain outside the model, but every
-  **populated THT pad** of the net carries its full **soldered
-  joint** on its SOLDER side (opposite the component; the
-  component-side pad face stays bare): a solder-filled barrel (SAC305
-  core in parallel with the plating), the average-thickness solder
-  coat over a pad-diameter disc, and the protruding-lead cone (see
-  barrel contacts below). Whether a hole
-  is a via or a THT pad, the owning footprint's side, and its **Do not
-  populate** flag are all read from KiCad — DNP pads stay plating-only
-  with no joint. At f > 0 the thickness scaling is applied
-  multiplicatively to the skin-corrected sheet conductance
+  **THT pads are fully modeled**: their exact copper shapes (incl.
+  oblong pads, fetched from KiCad; the outer shape stands in for inner
+  rings) are stamped onto every included layer, and every **populated**
+  pad carries its full **soldered joint** on its SOLDER side (opposite
+  the component; the component-side pad face stays bare): the hole
+  holds the **component lead** (a cylinder of drill −
+  `THT_LEAD_CLEARANCE_MM`, resistivity `THT_LEAD_RHO_OHM_M`, copper by
+  default — raise it for brass/steel leads) **plus solder** in the
+  remaining annulus, both in parallel with the plating; the mouth
+  copper stays conducting (it stands in for the plug — conservative,
+  the plug is worth far more than the foil); the pad face gets the
+  average-thickness solder coat (exact pad shape) and the
+  protruding-lead cone (see barrel contacts below; on oblong pads the
+  cone tapers within the inscribed circle). Whether a hole is a via or
+  a THT pad, the owning footprint's side, and its **Do not populate**
+  flag are all read from KiCad — **DNP pads** get an **open hole** and
+  a plating-only barrel, no joint. At f > 0 the thickness scaling is
+  applied multiplicatively to the skin-corrected sheet conductance
   (approximation). Per layer a barrel attaches to
   the fill cell under it, or to the nearest copper cell within the pad
   footprint plus one grid cell — fills joined by **thermal-relief
@@ -112,8 +119,9 @@ SWIG API. Requires KiCad **10.0.1+**.
   series resistance carries no discretization error and no cell-size
   tuning is needed for thin traces. 1D-modeled traces show potential,
   power density, and |J| (the true in-trace density from the link
-  currents, |ΔV|/(ρ·Δl)). Pad copper other than the selected
-  contacts is still **not** part of the conductor model.
+  currents, |ΔV|/(ρ·Δl)). THT pad copper is part of the conductor
+  (exact shapes, see above); **SMD** pad copper other than the
+  selected contacts is still **not**.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
   default**; `INCLUDE_MASK_BUILDUP`): zones drawn on `F.Mask`/`B.Mask`
   are treated as mask openings that collect `SOLDER_THICKNESS_UM`

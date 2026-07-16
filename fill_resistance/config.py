@@ -39,7 +39,14 @@ THT_LEAD_PROTRUSION_MM = 1.5    # clipped THT lead protrusion on the side
                                 # opposite the component: a solder cone of
                                 # this height at the drill wall (tapering to
                                 # zero at the pad edge) wraps the lead of
-                                # every soldered THT CONTACT. 0 = no cones
+                                # every populated THT pad. 0 = no cones
+THT_LEAD_CLEARANCE_MM = 0.25    # hole diameter minus lead diameter (fab
+                                # rule): a lead cylinder of drill - this
+                                # conducts inside every solder-filled hole
+THT_LEAD_RHO_OHM_M = 1.68e-8    # lead material resistivity: copper leads/
+                                # wires; brass ~6.4e-8, phosphor bronze
+                                # ~1.1e-7, copper-clad steel higher - raise
+                                # this if your components use such leads
 SKIN_SIDES = 1                  # skin-effect field config: 1 = plane facing a
                                 # return plane (conservative), 2 = isolated foil
 

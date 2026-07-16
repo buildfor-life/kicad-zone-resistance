@@ -211,8 +211,8 @@ def _pad_link(populated=True):
 
 def test_stitching_pad_joint():
     """A populated THT pad on the net (not a contact) gets the full
-    joint: coat discs on the outer layers and a cone on its protrusion
-    side; a DNP pad gets neither."""
+    joint: solder-side coat, cone, and a conducting (plugged) mouth;
+    a DNP pad gets an open hole and nothing else."""
     def prob(populated=True):
         p = make_problem([(PLATE20, [])],
                          rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
@@ -225,11 +225,13 @@ def test_stitching_pad_joint():
     r_joint, stack = _solve(p, 0.1)
     assert stack.thick_scale is not None and stack.thick_scale.max() > 3.0
     assert stack.buildup is not None and stack.buildup.any()
+    assert stack.masks[0][stack.cell_of(10 * NM, 10 * NM)]   # plugged mouth
 
     q = prob(populated=False)
     assert tht_joint_buildups(q) == []
     r_bare, s2 = _solve(q, 0.1)
-    assert s2.thick_scale is None and s2.buildup is None
+    assert s2.buildup is None
+    assert not s2.masks[0][s2.cell_of(10 * NM, 10 * NM)]     # DNP: open hole
     assert r_joint.R_ohm < r_bare.R_ohm
 
 
@@ -248,6 +250,54 @@ def test_cone_not_doubled_at_contact():
     wall = 1.0 + p.tht_protrusion_nm \
         * (p.rho_ohm_m / p.solder_rho_ohm_m) / p.layers[0].thickness_nm
     assert stack.thick_scale.max() == pytest.approx(wall, rel=1e-12)
+
+
+def test_lead_in_barrel_resistance():
+    """Populated hole: plating || lead cylinder || solder annulus, with
+    the lead clipped to the plating bore."""
+    v = ViaLink(x=0, y=0, drill_nm=1_000_000, z_top_nm=-1, z_bot_nm=1)
+    rho, sn = 1.68e-8, 1.32e-7
+    r_solder = v.barrel_resistance(1_600_000, rho, 18_000,
+                                   solder_rho_ohm_m=sn)
+    r_lead = v.barrel_resistance(1_600_000, rho, 18_000,
+                                 solder_rho_ohm_m=sn,
+                                 lead_nm=750_000, lead_rho_ohm_m=rho)
+    rl, rc = 0.375e-3, 0.5e-3 - 18e-6
+    ga = math.pi * 1e-3 * 18e-6 / rho
+    ga += math.pi * rl ** 2 / rho + math.pi * (rc ** 2 - rl ** 2) / sn
+    assert r_lead == pytest.approx(1.6e-3 / ga, rel=1e-12)
+    assert r_lead < r_solder
+    # a lead wider than the bore is clipped to it
+    r_big = v.barrel_resistance(1_600_000, rho, 18_000,
+                                solder_rho_ohm_m=sn,
+                                lead_nm=2_000_000, lead_rho_ohm_m=rho)
+    ga2 = math.pi * 1e-3 * 18e-6 / rho + math.pi * rc ** 2 / rho
+    assert r_big == pytest.approx(1.6e-3 / ga2, rel=1e-12)
+
+
+def test_oblong_pad_cone_uses_inscribed_dim():
+    """Oblong pads: the cone tapers to the inscribed circle (pad_min),
+    never past it, so the long pad axis is not overstated sideways."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.vias = [_pad_link()]
+    p.vias[0].pad_min_nm = 1_600_000          # 2.4 mm max, 1.6 mm min
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    ii, jj = np.nonzero(stack.thick_scale[0] != 1.0)
+    d = np.hypot(stack.x0_nm + (jj + 0.5) * stack.h_nm - 10 * NM,
+                 stack.y0_nm + (ii + 0.5) * stack.h_nm - 10 * NM)
+    assert len(d) and d.max() < 0.8 * NM
+
+
+def test_stitching_coat_exact_shape():
+    """When KiCad supplies the exact pad polygon, the coat uses it
+    instead of the pad-diameter disc (oblong pads stay honest)."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.vias = [_pad_link()]
+    shape = _disc(10, 10, 0.9)
+    assert tht_joint_buildups(p, {(10 * NM, 10 * NM): [shape]}) == ["F.Cu"]
+    assert p.buildups[0].polygons[0] is shape
 
 
 def test_vialink_solder_json():

@@ -50,9 +50,13 @@ def test_cap_at_foil_thickness_is_identity():
     so the result equals the feature-off reference (a 'pad'-kind barrel,
     which skips rings and mouths) with the mouth fully inside copper."""
     r_cap, _ = _solve(_two_layer(capped=True, cap_um=70.0), 0.1)
-    # a bare 'pad' barrel (solder_filled defaults False) is plating-only,
-    # exactly like the via's
-    r_ref, _ = _solve(_two_layer(kind="pad"), 0.1)
+    ref = _two_layer(kind="pad")
+    # populated pads skip rings and mouths; kill the lead + solder core
+    # so the reference barrel matches the via's plating-only resistance
+    ref.vias[0].solder_filled = True
+    ref.solder_rho_ohm_m = 1e30
+    ref.tht_lead_clearance_nm = 10 ** 9
+    r_ref, _ = _solve(ref, 0.1)
     assert r_cap.R_ohm == pytest.approx(r_ref.R_ohm, rel=1e-9)
 
 
