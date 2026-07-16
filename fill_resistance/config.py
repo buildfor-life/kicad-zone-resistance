@@ -35,6 +35,11 @@ INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too;
                                 # their holes are modeled solder-filled (a
                                 # soldered component lead), so the solder core
                                 # conducts in parallel with the plating
+THT_LEAD_PROTRUSION_MM = 1.5    # clipped THT lead protrusion on the side
+                                # opposite the component: a solder cone of
+                                # this height at the drill wall (tapering to
+                                # zero at the pad edge) wraps the lead of
+                                # every soldered THT CONTACT. 0 = no cones
 SKIN_SIDES = 1                  # skin-effect field config: 1 = plane facing a
                                 # return plane (conservative), 2 = isolated foil
 

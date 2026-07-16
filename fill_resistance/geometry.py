@@ -116,6 +116,11 @@ class Electrode:
     center: tuple[int, int] | None = None     # drill center; None = rect center
     barrel_z: tuple[int, int] | None = None   # (z_top, z_bot); None = full stack
     solder: bool = False                      # soldered THT joint (see above)
+    protrusion_side: str | None = None        # outer layer where the clipped
+                                              # lead protrudes (opposite the
+                                              # component): a solder cone
+                                              # wraps it there, see
+                                              # Problem.tht_protrusion_nm
 
 
 @dataclass
@@ -170,6 +175,13 @@ class Problem:
     cap_max_drill_nm: int = 500_000           # fab caps only small vias:
                                               # drills above this stay open
                                               # even with vias_capped
+    tht_protrusion_nm: int = 1_500_000        # clipped THT lead protrusion:
+                                              # a solder cone of this height
+                                              # at the drill wall (tapering
+                                              # to zero at the pad edge)
+                                              # wraps the lead on each solder
+                                              # contact's protrusion_side;
+                                              # 0 disables the cones
 
     @property
     def layer_names(self) -> list[str]:
@@ -368,6 +380,7 @@ def _electrode_to_json(e: Electrode) -> dict:
         "center": (None if e.center is None else list(e.center)),
         "barrel_z": (None if e.barrel_z is None else list(e.barrel_z)),
         "solder": e.solder,
+        "protrusion_side": e.protrusion_side,
     }
 
 
@@ -385,6 +398,7 @@ def _electrode_from_json(d: dict) -> Electrode:
         barrel_z=(None if d.get("barrel_z") is None
                   else (int(d["barrel_z"][0]), int(d["barrel_z"][1]))),
         solder=bool(d.get("solder", False)),
+        protrusion_side=d.get("protrusion_side"),
     )
 
 
@@ -424,6 +438,7 @@ def problem_to_json(p: Problem) -> dict:
         "vias_capped": p.vias_capped,
         "cap_plating_nm": p.cap_plating_nm,
         "cap_max_drill_nm": p.cap_max_drill_nm,
+        "tht_protrusion_nm": p.tht_protrusion_nm,
     }
 
 
@@ -498,6 +513,7 @@ def problem_from_json(d: dict) -> Problem:
         vias_capped=bool(d.get("vias_capped", True)),
         cap_plating_nm=int(d.get("cap_plating_nm", 15_000)),
         cap_max_drill_nm=int(d.get("cap_max_drill_nm", 500_000)),
+        tht_protrusion_nm=int(d.get("tht_protrusion_nm", 1_500_000)),
     )
 
 

@@ -143,16 +143,73 @@ def test_contact_solder_coat():
     assert r_coat.R_ohm < r_bare.R_ohm
 
 
+def test_lead_fillet_profile():
+    """The protruding-lead solder cone paints thick_scale with the exact
+    per-cell formula: 1 + H*clip((rb-r)/(rb-ra), 0, 1)*(rho_cu/rho_sn)/t
+    on copper of the protrusion side; nothing elsewhere."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4, solder=True)]
+    p.electrodes1[0].protrusion_side = "F.Cu"
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    assert stack.thick_scale is not None
+    ny, nx = stack.shape2d
+    jj, ii = np.meshgrid(np.arange(nx), np.arange(ny))
+    r = np.hypot(stack.x0_nm + (jj + 0.5) * stack.h_nm - 10 * NM,
+                 stack.y0_nm + (ii + 0.5) * stack.h_nm - 10 * NM)
+    ra, rb, H = 0.5 * NM, 1.2 * NM, p.tht_protrusion_nm
+    t_eq = H * np.clip((rb - r) / (rb - ra), 0, 1) \
+        * (p.rho_ohm_m / p.solder_rho_ohm_m)
+    expect = np.where(stack.masks[0],
+                      1.0 + t_eq / p.layers[0].thickness_nm, 1.0)
+    assert np.allclose(stack.thick_scale[0], expect, rtol=1e-12)
+    # 1.5 mm of solder at the wall ~ 191 um copper: factor ~ 3.7 on 70 um
+    assert stack.thick_scale[0].max() > 3.0
+
+    p.electrodes1[0].protrusion_side = None    # e.g. via contact: no cone
+    s2 = raster.rasterize_stack(p, 0.1 * NM)
+    assert s2.thick_scale is None
+
+
+def test_lead_fillet_lowers_resistance(monkeypatch):
+    """The cone shorts the joint vicinity: R(with cone) < R(coat-less
+    bare barrel); the adaptive grid pins the cone cells fine and
+    matches the uniform grid."""
+    def prob(protrude=True):
+        p = make_problem([(PLATE20, [])],
+                         rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+        p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4,
+                                 solder=True)]
+        p.electrodes1[0].protrusion_side = "F.Cu"
+        if not protrude:
+            p.tht_protrusion_nm = 0
+        return p
+
+    r_cone, _ = _solve(prob(), 0.1)
+    r_bare, _ = _solve(prob(protrude=False), 0.1)
+    assert r_cone.R_ohm < r_bare.R_ohm
+
+    from fill_resistance import config
+    monkeypatch.setattr(config, "ADAPTIVE_CELLS", True)
+    r_ada, _ = _solve(prob(), 0.1)
+    assert r_ada.R_ohm == pytest.approx(r_cone.R_ohm, rel=2e-3)
+
+
 def test_barrel_electrode_json_roundtrip(tmp_path):
     p = make_problem([(PLATE20, [])],
                      rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
     p.electrodes1 = [_barrel(10, 10, drill_mm=0.6, pad_mm=1.2, solder=True,
                              polygons=[_disc(10, 10, 0.6)])]
     p.electrodes1[0].barrel_z = (-1, 1_600_001)
+    p.electrodes1[0].protrusion_side = "B.Cu"
+    p.tht_protrusion_nm = 1_200_000
     f = tmp_path / "d.json"
     save_problem(p, f)
-    e = load_problem(f).electrodes1[0]
+    q = load_problem(f)
+    e = q.electrodes1[0]
     assert e.drill_nm == 600_000 and e.pad_nm == 1_200_000
     assert e.center == (10 * NM, 10 * NM)
     assert e.barrel_z == (-1, 1_600_001)
     assert e.solder is True and len(e.polygons) == 1
+    assert e.protrusion_side == "B.Cu"
+    assert q.tht_protrusion_nm == 1_200_000

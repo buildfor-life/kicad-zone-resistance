@@ -232,7 +232,56 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
                     _paint_ring(stack, hole, False, pmask)
                 stack.buildup[li] |= pmask
         stack.buildup &= stack.masks        # solder wets exposed copper only
+
+    _paint_lead_fillets(stack, problem)
     return stack
+
+
+def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
+    """Protruding THT leads of soldered barrel contacts: the clipped
+    lead sticks tht_protrusion_nm out of the hole on the side opposite
+    the component, wrapped by a solder cone - full protrusion height at
+    the drill wall, tapering linearly to zero at the pad edge. Modeled
+    as extra conduction-equivalent copper via stack.thick_scale: the
+    tall solder column next to the wall pulls those cells to lead
+    potential (equivalent to extending the barrel wall vertically), the
+    taper carries the radial spreading. At f > 0 the factor multiplies
+    the skin-corrected sheet conductance, like the via mouths
+    (approximation)."""
+    H = problem.tht_protrusion_nm
+    if H <= 0:
+        return
+    ny, nx = stack.shape2d
+    h = stack.h_nm
+    index = {name: li for li, name in enumerate(stack.layer_names)}
+    for e in problem.electrodes1 + problem.electrodes2:
+        if not (e.solder and e.drill_nm > 0 and e.protrusion_side):
+            continue
+        li = index.get(e.protrusion_side)
+        if li is None or e.pad_nm <= e.drill_nm:
+            continue
+        if e.center is not None:
+            x, y = e.center
+        else:
+            x = (e.rect.x0 + e.rect.x1) / 2.0
+            y = (e.rect.y0 + e.rect.y1) / 2.0
+        ra, rb = e.drill_nm / 2.0, e.pad_nm / 2.0
+        j0 = max(0, math.floor((x - rb - stack.x0_nm) / h))
+        j1 = min(nx, math.floor((x + rb - stack.x0_nm) / h) + 1)
+        i0 = max(0, math.floor((y - rb - stack.y0_nm) / h))
+        i1 = min(ny, math.floor((y + rb - stack.y0_nm) / h) + 1)
+        if i0 >= i1 or j0 >= j1:
+            continue
+        xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - x
+        ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - y
+        r = np.sqrt(ys[:, None] ** 2 + xs[None, :] ** 2)
+        t_sn = H * np.clip((rb - r) / (rb - ra), 0.0, 1.0)
+        t_eq = t_sn * (problem.rho_ohm_m / problem.solder_rho_ohm_m)
+        factor = 1.0 + t_eq / problem.layers[li].thickness_nm
+        if stack.thick_scale is None:
+            stack.thick_scale = np.ones(stack.masks.shape)
+        m = stack.masks[li, i0:i1, j0:j1]
+        stack.thick_scale[li, i0:i1, j0:j1] *= np.where(m, factor, 1.0)
 
 
 def _via_span(problem: Problem, via) -> list[int]:

@@ -180,8 +180,29 @@ def _pad_polygons(board: Board, pad: Pad, contact: str) -> list[Polygon] | None:
     return None
 
 
-def _to_electrode(board: Board, item,
-                  stackup: StackupInfo | None = None) -> Electrode:
+def _tht_protrusion_side(pad: Pad, footprints) -> str:
+    """Outer layer where the clipped THT lead protrudes (tent + solder
+    cone): the side OPPOSITE the component. Footprint pads are stored
+    with absolute positions, so the owning footprint is matched by pad
+    number + position. Unknown owner -> assume the component sits on
+    F.Cu (lead tents on B.Cu)."""
+    try:
+        for fp in footprints or []:
+            for fpad in fp.definition.pads:
+                if fpad.number == pad.number \
+                        and fpad.position.x == pad.position.x \
+                        and fpad.position.y == pad.position.y:
+                    side = canonical_name(fp.layer)
+                    return "F.Cu" if side == "B.Cu" else "B.Cu"
+    except Exception:
+        pass
+    print(f"note: no footprint found for pad {pad.number} - assuming its "
+          f"lead protrudes on B.Cu")
+    return "B.Cu"
+
+
+def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
+                  footprints=None) -> Electrode:
     if isinstance(item, BoardRectangle):
         tl, br = item.top_left, item.bottom_right
         rect = Rect.normalized(tl.x, tl.y, br.x, br.y,
@@ -219,10 +240,13 @@ def _to_electrode(board: Board, item,
     return Electrode(rect=rect, contact=contact,
                      polygons=_pad_polygons(board, pad, contact), label=label,
                      # through-hole pad: current enters at the soldered
-                     # barrel; the joint is solder-filled + pad-coated
+                     # barrel; the joint is solder-filled + pad-coated,
+                     # with a solder cone around the protruding lead
                      drill_nm=drill, pad_nm=_padstack_pad_nm(pad),
                      center=(pad.position.x, pad.position.y),
-                     solder=drill > 0)
+                     solder=drill > 0,
+                     protrusion_side=(_tht_protrusion_side(pad, footprints)
+                                      if drill > 0 else None))
 
 
 def _net_hint_of(items: list) -> str | None:
@@ -257,6 +281,10 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
     selection = list(board.get_selection())
     rects = [s for s in selection if isinstance(s, BoardRectangle)]
     pads = [s for s in selection if isinstance(s, (Pad, Via))]
+    # protrusion-side lookup needs the owning footprints (THT pads only)
+    footprints = (board.get_footprints()
+                  if any(isinstance(s, Pad) and _pad_drill_nm(s) > 0
+                         for s in pads) else None)
 
     if not selection:
         allr = [s for s in board.get_shapes() if isinstance(s, BoardRectangle)]
@@ -292,7 +320,8 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
                 f"only for a side that has none."
             )
         if pads:
-            pad_parts = [_to_electrode(board, p, stackup) for p in pads]
+            pad_parts = [_to_electrode(board, p, stackup, footprints)
+                         for p in pads]
             if not es1:
                 es1 = pad_parts
             else:
@@ -306,8 +335,9 @@ def get_electrodes(board: Board, stackup: StackupInfo | None = None
 
     items = rects + pads
     if len(items) == 2:
-        return ([_to_electrode(board, items[0], stackup)],
-                [_to_electrode(board, items[1], stackup)], _net_hint_of(pads))
+        return ([_to_electrode(board, items[0], stackup, footprints)],
+                [_to_electrode(board, items[1], stackup, footprints)],
+                _net_hint_of(pads))
     raise SelectionError(
         f"The selection has {len(rects)} rectangle(s) (none on the marker "
         f"layers) and {len(pads)} pad(s)/via(s); without marker layers "
@@ -554,12 +584,19 @@ def build_problem(board: Board, net: str, layer_names: list[str],
         cap_plating_nm=int(config.CAP_PLATING_UM * 1000),
         cap_max_drill_nm=int((cap_max_drill_mm if cap_max_drill_mm is not None
                               else config.CAP_MAX_DRILL_MM) * 1e6),
+        tht_protrusion_nm=int(config.THT_LEAD_PROTRUSION_MM * 1e6),
     )
     solder_layers = contact_solder_buildups(problem)
     if solder_layers:
+        sides = sorted({e.protrusion_side
+                        for e in problem.electrodes1 + problem.electrodes2
+                        if e.solder and e.protrusion_side})
+        cone = (f", {config.THT_LEAD_PROTRUSION_MM:g} mm lead + solder cone "
+                f"on {', '.join(sides)}"
+                if sides and problem.tht_protrusion_nm > 0 else "")
         print(f"THT contact(s): solder-filled hole + "
               f"{config.SOLDER_THICKNESS_UM:g} um average solder coat on the "
-              f"pad face ({', '.join(solder_layers)})")
+              f"pad face ({', '.join(solder_layers)}){cone}")
     return problem
 
 

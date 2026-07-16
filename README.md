@@ -125,9 +125,17 @@ SWIG API. Requires KiCad **10.0.1+**.
   soldered **THT joint** additionally assumes the **hole is filled with
   solder** (core in parallel with the plating) and the **pad face
   carries an average-thickness solder coat** (`SOLDER_THICKNESS_UM`,
-  50 µm) over the modeled copper under the pad shape. To model a probe
-  pressed onto the pad face instead, draw a marker rectangle over the
-  pad.
+  50 µm) over the modeled copper under the pad shape. The **clipped
+  lead protrudes** `THT_LEAD_PROTRUSION_MM` (1.5 mm, 0 = off) on the
+  side opposite the component (taken from the owning footprint;
+  assumed `B.Cu` if it cannot be found) and a **solder cone** wraps
+  it: full protrusion height at the drill wall, tapering linearly to
+  zero at the pad edge, applied as extra conduction-equivalent copper
+  per cell. The tall solder column at the wall pulls the joint
+  vicinity to lead potential — equivalent to extending the barrel wall
+  vertically — while the taper carries the radial spreading. To model
+  a probe pressed onto the pad face instead, draw a marker rectangle
+  over the pad.
 - **Contact models** (dialog / `CONTACT_MODEL`): default **uniform
   injection** — a conductor pressed on top feeds the current orthogonally
   with uniform surface density, so |J| ramps across the contact area
