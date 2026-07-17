@@ -104,32 +104,13 @@ def demo_problem() -> Problem:
     return p
 
 
-def _overlay_potential(fig, res, stack):
-    """Equipotential contours on the per-layer current-density axes,
-    on shared levels so line density reads as field strength."""
-    vmax = float(np.nanmax(res.V))
-    vmin = min(0.0, float(np.nanmin(res.V)))
-    levels = np.linspace(vmin, vmax, 17)[1:-1]
-    ext = stack.extent_mm()
-    ny, nx = stack.shape2d
-    xs = np.linspace(ext[0], ext[1], nx, endpoint=False)
-    xs += (xs[1] - xs[0]) / 2
-    ys = np.linspace(ext[3], ext[2], ny, endpoint=False)
-    ys += (ys[1] - ys[0]) / 2
-    for li, ax in enumerate(a for a in fig.axes if a.images):
-        with np.errstate(invalid="ignore"):
-            ax.contour(xs, ys, res.V[li], levels=levels, colors="white",
-                       linewidths=0.5, alpha=0.65)
-
-
 def gen_demo_maps():
     p = demo_problem()
     res, stack, e1, e2 = _solve(p, 0.05)
-    fig_j = plots.fig_current(res, stack, e1, e2, p)
-    _overlay_potential(fig_j, res, stack)
     figs = [
         (plots.fig_raster(stack, e1, e2, p, res), "demo-raster"),
-        (fig_j, "demo-current"),
+        (plots.fig_current(res, stack, e1, e2, p), "demo-current"),
+        (plots.fig_potential(res, stack, e1, e2, p), "demo-potential"),
     ]
     plots.save_and_show(figs, OUT, show=False)
 
