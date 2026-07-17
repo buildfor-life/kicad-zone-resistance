@@ -166,6 +166,32 @@ def test_part_currents_and_ac(monkeypatch):
     assert ada.rs_ratios == ref.rs_ratios
 
 
+def test_stitching_pad_mid_plane_close(monkeypatch):
+    """A solder-filled THT stitching pad mid-pour leaves no keep-fine
+    marker of its own (mouth not cut, thick_scale untouched, no copper
+    boundary nearby): without the barrel-attachment pinning its links
+    landed in a coarse equipotential leaf and the local spreading
+    resistance vanished - R read ~20% low on this exact case."""
+    sq = [(0, 0), (40, 0), (40, 40), (0, 40)]
+
+    def prob():
+        p = make_multilayer(
+            [[(sq, [])], [(sq, [])]],
+            rect1_mm=(0, 15, 2, 25), rect2_mm=(38, 15, 40, 25),
+            contact1="L0", contact2="L1",
+            vias_mm=[(20, 20)], gap_mm=1.6, drill_mm=1.0)
+        v = p.vias[0]
+        v.kind = "pad"
+        v.pad_nm = int(1.8 * NM)
+        v.solder_filled = True
+        return p
+
+    ref = _run(prob(), 0.15, adaptive=False, monkeypatch=monkeypatch)
+    ada = _run(prob(), 0.15, adaptive=True, monkeypatch=monkeypatch)
+    assert ada.n_free < 0.4 * ref.n_free       # pour still coarsens
+    assert ada.R_ohm == pytest.approx(ref.R_ohm, rel=2e-3)
+
+
 def test_auto_cell_size_finer_with_adaptive(monkeypatch):
     """The auto sizer affords a larger fine-cell budget (finer h) when
     the adaptive grid is on."""

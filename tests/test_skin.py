@@ -64,6 +64,24 @@ def test_parse_frequency():
         skin.parse_frequency("-5k")
 
 
+def test_normalize_decimal():
+    """European decimal commas parse; thousands-separator patterns are
+    rejected ('1,500' silently becoming 1.5 was a 1000x input error)."""
+    assert skin.normalize_decimal("1,5") == "1.5"
+    assert skin.normalize_decimal("0,25") == "0.25"
+    assert skin.normalize_decimal("1,5000") == "1.5000"   # 4 digits: decimal
+    assert skin.normalize_decimal("2.5") == "2.5"
+    for bad in ("1,500", "1.500,5", "1,000,000", "12,345"):
+        with pytest.raises(ValueError, match="separator"):
+            skin.normalize_decimal(bad)
+
+
+def test_parse_frequency_decimal_comma():
+    assert skin.parse_frequency("1,5k") == 1500.0
+    with pytest.raises(ValueError):
+        skin.parse_frequency("1,500")     # ambiguous, not 1.5 Hz
+
+
 def test_single_layer_ac_scales_exactly():
     """Uniform conductance scaling leaves the field shape unchanged:
     R_AC = R_DC * factor to solver precision."""
