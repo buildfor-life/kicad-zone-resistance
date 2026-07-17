@@ -12,7 +12,9 @@ from .solver import Result
 
 def run(problem: Problem, outdir: Path | None, show: bool = True,
         i_test: float | None = None, freq_hz: float = 0.0,
-        contact_model: str | None = None) -> Result:
+        contact_model: str | None = None, overlay=None) -> Result:
+    """overlay: optional callback(stack, result) run after the solve
+    (EXPERIMENTAL in-KiCad overlays); its failures are non-fatal."""
     if i_test is None:
         i_test = config.TEST_CURRENT_A
     if i_test <= 0:
@@ -42,6 +44,12 @@ def run(problem: Problem, outdir: Path | None, show: bool = True,
         outdir.mkdir(parents=True, exist_ok=True)
         report.write_summary(outdir, problem, stack, result)
     print(report.result_line(result, problem, stack))
+
+    if overlay is not None:
+        try:
+            overlay(stack, result)
+        except Exception as e:
+            print(f"overlay push failed: {e}")
 
     figs = [
         (plots.fig_raster(stack, e1, e2, problem, result), "1_raster_map"),

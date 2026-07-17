@@ -75,6 +75,17 @@ SWIG API. Requires KiCad **10.0.1+**.
    per-via current and dissipation, and the **current through each
    injection area** — computed flux with the equipotential model,
    prescribed area share with the uniform model), `geometry_dump.json`.
+5. **Experimental — overlays inside KiCad** (dialog checkbox, default
+   off; KiCad ≥ 10.0.1): after the solve, the per-layer **|J| heatmaps
+   are pushed into the open board** as unlocked reference images on
+   `User.9`…`User.12` (`OVERLAY_LAYERS`; enable them in Board Setup),
+   copper layers mapped in stackup order, top first. Toggle them in the
+   Appearance panel like any layer; opaque over copper, transparent
+   elsewhere, cold end lifted so it stays visible on the dark canvas.
+   Reference images never plot to gerbers. Every push **replaces all
+   reference images on those layers**, so don't store unrelated images
+   there. Also available headless:
+   `python tools/kicad_heatmap_overlay.py --net X --amps 10`.
 
 ## Model & limits
 

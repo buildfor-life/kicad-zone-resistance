@@ -102,9 +102,14 @@ def main() -> None:
             raise UserFacingError(f"KiCad API error: {e}")
 
         report.write_geometry_dump(outdir, problem)
+        overlay_cb = None
+        if selection.push_overlays:
+            def overlay_cb(stack, result):
+                board_io.push_result_overlays(board, stack, result)
         pipeline.run(problem, outdir, show=True, i_test=selection.current_a,
                      freq_hz=selection.freq_hz,
-                     contact_model=selection.contact_model)
+                     contact_model=selection.contact_model,
+                     overlay=overlay_cb)
     except UserFacingError as e:
         _fail(str(e), outdir)
     except Exception:

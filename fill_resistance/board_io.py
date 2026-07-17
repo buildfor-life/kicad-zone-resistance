@@ -631,6 +631,77 @@ def gather_tht_pad_copper(board: Board, net_name: str
     return shapes
 
 
+# --- in-KiCad result overlays (EXPERIMENTAL) ---------------------------------
+
+# KiCad sizes reference images as pixels * (1 inch / PPI) * image_scale
+# and assumes 300 PPI for PNGs without a density chunk (BITMAP_BASE)
+OVERLAY_PIX_NM = 25.4e6 / 300
+
+
+def _create_reference_image(board: Board, ref) -> None:
+    """create_items with the per-item status surfaced (kipy <= 0.7.1
+    swallows it and returns an empty wrapper on failure)."""
+    from kipy.proto.common.commands.editor_commands_pb2 import (
+        CreateItems, CreateItemsResponse)
+    from kipy.util import pack_any
+
+    cmd = CreateItems()
+    cmd.header.document.CopyFrom(board._doc)
+    cmd.items.append(pack_any(ref.proto))
+    result = board._kicad.send(cmd, CreateItemsResponse).created_items[0]
+    if result.status.code != 1:                 # 1 = ISC_OK
+        raise RuntimeError(
+            f"KiCad rejected the image (status {result.status.code}) "
+            f"{result.status.error_message or ''} - is the layer enabled "
+            f"in Board Setup? (KiCad >= 10.0.1 required)")
+
+
+def remove_overlays(board: Board, layer) -> int:
+    """Remove every reference image on the given layer; returns count."""
+    ours = [r for r in board.get_reference_images() if r.layer == layer]
+    if ours:
+        board.remove_items(ours)
+    return len(ours)
+
+
+def push_result_overlays(board: Board, stack, result,
+                         lock: bool = False) -> None:
+    """EXPERIMENTAL: the solved |J| of every included copper layer as an
+    unlocked reference image on config.OVERLAY_LAYERS (stackup order,
+    top first; existing images there are replaced). Editor-only -
+    reference images never plot. Per-layer failures are reported and
+    skipped, never fatal to the run."""
+    from kipy.board_types import ReferenceImage
+    from kipy.geometry import Vector2
+
+    from .overlay import heatmap_png
+
+    names = stack.layer_names
+    pairs = list(zip(names, config.OVERLAY_LAYERS))
+    if len(names) > len(config.OVERLAY_LAYERS):
+        print(f"overlays: more copper layers than slots - "
+              f"{', '.join(names[len(config.OVERLAY_LAYERS):])} skipped")
+    ny, nx = stack.shape2d
+    w_nm, h_nm = nx * stack.h_nm, ny * stack.h_nm
+    for src, dest_name in pairs:
+        try:
+            dest = layer_from_canonical_name(dest_name)
+            png = heatmap_png(result.Jmag * 1e-6, names.index(src))
+            remove_overlays(board, dest)
+            ref = ReferenceImage()
+            ref.layer = dest
+            ref.position = Vector2.from_xy(round(stack.x0_nm + w_nm / 2),
+                                           round(stack.y0_nm + h_nm / 2))
+            ref.image_scale = w_nm / (nx * OVERLAY_PIX_NM)
+            ref.image_data = png
+            ref.locked = lock
+            _create_reference_image(board, ref)
+            print(f"overlay: |J| of {src} -> {dest_name} "
+                  f"({len(png) / 1024:.0f} kB)")
+        except Exception as e:
+            print(f"overlay: {src} -> {dest_name} failed: {e}")
+
+
 # --- top level ----------------------------------------------------------------
 
 def build_problem(board: Board, net: str, layer_names: list[str],

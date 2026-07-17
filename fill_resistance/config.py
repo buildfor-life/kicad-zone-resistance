@@ -78,6 +78,20 @@ ELECTRODE_POS_LAYER = "User.1"  # rectangles on this layer mark V+ contact parts
 ELECTRODE_NEG_LAYER = "User.2"  # rectangles on this layer mark V- contact parts
 ALWAYS_REFILL = False           # refill zones even if KiCad says they are filled
 
+# --- In-KiCad result overlays (EXPERIMENTAL) ---
+PUSH_OVERLAYS = False           # after solving, push the per-layer |J|
+                                # heatmaps into the open board as unlocked
+                                # reference images (editor-only, never
+                                # plotted); dialog-toggleable
+OVERLAY_LAYERS = ("User.9", "User.10", "User.11", "User.12")
+                                # copper layers map here in stackup order
+                                # (top first); existing reference images on
+                                # these layers are REPLACED on every push;
+                                # each must be enabled in Board Setup
+OVERLAY_ALPHA = 255             # overlay opacity over copper (0-255);
+                                # translucency washes out over bright
+                                # copper - toggle the User layer instead
+
 # --- Adaptive grid ---
 ADAPTIVE_CELLS = True           # solve on a 2:1-balanced quadtree: fine at
                                 # copper boundaries/electrodes/features,

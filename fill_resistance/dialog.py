@@ -39,6 +39,7 @@ class Selection:
     vias_capped: bool = True
     cap_max_drill_mm: float = 0.5
     adaptive: bool = True
+    push_overlays: bool = False   # EXPERIMENTAL in-KiCad |J| overlays
 
 
 class _Dialog(QDialog):
@@ -120,6 +121,14 @@ class _Dialog(QDialog):
         self.extracu_edit = QLineEdit(f"{config.BUILDUP_EXTRA_CU_UM:g}")
         self.extracu_edit.setEnabled(bool(buildup_layers))
         form.addRow("Extra Cu in openings [µm]:", self.extracu_edit)
+
+        first, last = config.OVERLAY_LAYERS[0], config.OVERLAY_LAYERS[-1]
+        self.overlay_check = QCheckBox(
+            f"experimental: push per-layer |J| heatmaps into the board as "
+            f"reference images on {first}..{last} (replaces images there; "
+            f"layers must be enabled in Board Setup)")
+        self.overlay_check.setChecked(config.PUSH_OVERLAYS)
+        form.addRow("Overlays:", self.overlay_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._try_accept)
@@ -237,7 +246,8 @@ class _Dialog(QDialog):
                          include_tracks=self.tracks_check.isChecked(),
                          vias_capped=self.capped_check.isChecked(),
                          cap_max_drill_mm=cap_max_drill,
-                         adaptive=self.adaptive_check.isChecked())
+                         adaptive=self.adaptive_check.isChecked(),
+                         push_overlays=self.overlay_check.isChecked())
 
     def _try_accept(self) -> None:
         try:
