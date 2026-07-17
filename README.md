@@ -232,6 +232,15 @@ SWIG API. Requires KiCad **10.0.1+**.
   in plane interiors), the tin-gray solder coat of the THT-pad contact
   P1, and the via field with its pad copper.*
 
+**Measured vs. computed**: we tested the plugin on a few real boards
+against a UT3513+ micro-ohm meter; the measured resistances were within
+±20 % of the computed values. We attribute the deviation to
+imperfections of the testing setup (probe placement and probe contact
+resistance vs. the ideal modeled contacts) and to manufacturing
+inaccuracies — actual copper and plating thicknesses routinely deviate
+from nominal. Relative comparisons between layout variants are
+accordingly more trustworthy than absolute numbers.
+
 ## Offline / development
 
 Every run writes `geometry_dump.json`; re-solve without KiCad:
