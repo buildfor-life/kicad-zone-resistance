@@ -46,7 +46,16 @@ class RasterStack:
     thick_scale: np.ndarray | None = None   # float (L, ny, nx): per-cell
                                             # copper-thickness factor (via
                                             # mouths: cap-thin or partially
-                                            # drilled cells); None = all 1
+                                            # drilled cells; folded-in cone
+                                            # and plug extras); None = all 1
+    t_extra_nm: np.ndarray | None = None    # float (L, ny, nx): additive
+                                            # conduction-equivalent copper
+                                            # (lead cones + hole plugs),
+                                            # folded into thick_scale at the
+                                            # end of rasterize_stack
+    plug: np.ndarray | None = None      # bool (L, ny, nx): solder-filled THT
+                                        # hole mouths (lead + solder plug,
+                                        # drawn on the raster map)
     mesh: np.ndarray | None = None      # bool (L, ny, nx): adaptive leaf
                                         # boundaries (drawn on the raster map)
 
@@ -234,6 +243,17 @@ def rasterize_stack(problem: Problem, h_nm: float) -> RasterStack:
         stack.buildup &= stack.masks        # solder wets exposed copper only
 
     _paint_lead_fillets(stack, problem)
+
+    if stack.t_extra_nm is not None:
+        # cones + plugs are ADDITIVE conduction-equivalent copper; fold
+        # them into the multiplicative per-cell scale once (multiplying
+        # per contribution would overstate cells carrying both)
+        if stack.thick_scale is None:
+            stack.thick_scale = np.ones(stack.masks.shape)
+        for li, layer in enumerate(problem.layers):
+            stack.thick_scale[li] *= np.where(
+                stack.masks[li],
+                1.0 + stack.t_extra_nm[li] / layer.thickness_nm, 1.0)
     return stack
 
 
@@ -243,7 +263,8 @@ def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
     tht_protrusion_nm out of the hole on the side opposite the
     component, wrapped by a solder cone - full protrusion height at
     the drill wall, tapering linearly to zero at the pad edge. Modeled
-    as extra conduction-equivalent copper via stack.thick_scale: the
+    as extra conduction-equivalent copper (stack.t_extra_nm, ADDITIVE
+    with the hole plug, folded into thick_scale by rasterize_stack): the
     tall solder column next to the wall pulls those cells to lead
     potential (equivalent to extending the barrel wall vertically), the
     taper carries the radial spreading. At f > 0 the factor multiplies
@@ -297,11 +318,10 @@ def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
         r = slot_distance(xs[None, :], ys[:, None], sdx, sdy)
         t_sn = H * np.clip((rb - r) / (rb - ra), 0.0, 1.0)
         t_eq = t_sn * (problem.rho_ohm_m / problem.solder_rho_ohm_m)
-        factor = 1.0 + t_eq / problem.layers[li].thickness_nm
-        if stack.thick_scale is None:
-            stack.thick_scale = np.ones(stack.masks.shape)
+        if stack.t_extra_nm is None:
+            stack.t_extra_nm = np.zeros(stack.masks.shape)
         m = stack.masks[li, i0:i1, j0:j1]
-        stack.thick_scale[li, i0:i1, j0:j1] *= np.where(m, factor, 1.0)
+        stack.t_extra_nm[li, i0:i1, j0:j1] += np.where(m, t_eq, 0.0)
 
 
 def _via_span(problem: Problem, via) -> list[int]:
@@ -339,8 +359,13 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
     OUTER layers, uncapped vias (and inner layers either way) get an open
     hole. The fab caps only small vias: drills above cap_max_drill_nm
     stay open even with vias_capped. THT pad mouths: populated pads are
-    solder-filled - the mouth copper stays and stands in for the plug
-    (conservative: the plug's solder is worth far more than the foil);
+    solder-filled - the mouth keeps its copper and additionally carries
+    the PLUG (the component lead plus the solder filling the bore) as
+    in-plane conduction-equivalent copper of the FULL hole depth on
+    EVERY spanned layer (the pin continues beyond both mouths, so each
+    layer sees the whole plug cross-section); the joint is then
+    side-symmetric except for the solder: the solder-side coat and cone
+    come on top, additively (see _paint_lead_fillets).
     DNP pad holes are cut open on every layer. Fully swallowed cells
     leave the mask; partially covered cells keep a thickness-scaled
     sheet conductance via stack.thick_scale."""
@@ -352,8 +377,7 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
     for via in problem.vias:
         if via.drill_nm <= 0:
             continue
-        if via.kind == "pad" and via.solder_filled:
-            continue
+        plugged = via.kind == "pad" and via.solder_filled
         r = via.drill_nm / 2.0
         ex, ey = r + abs(via.slot_dx_nm), r + abs(via.slot_dy_nm)
         j0 = max(0, math.floor((via.x - ex - stack.x0_nm) / h))
@@ -371,9 +395,35 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
                <= r).mean(axis=(2, 3))
         if not (cov > 0).any():
             continue                            # mouth far smaller than h
+        span = _via_span(problem, via)
+
+        if plugged:
+            # lead cylinder + solder bore: the pin continues beyond BOTH
+            # mouths (component body / clipped stickout), so every
+            # spanned layer sees the FULL plug depth for lateral
+            # spreading - no per-layer split
+            r_lead = max(via.drill_nm - problem.tht_lead_clearance_nm,
+                         0) / 2.0
+            cov_lead = (np.hypot(xs[None, :, None, :],
+                                 ys[:, None, :, None])
+                        <= r_lead).mean(axis=(2, 3))
+            t_sn = problem.rho_ohm_m / problem.solder_rho_ohm_m
+            t_pb = problem.rho_ohm_m / problem.tht_lead_rho_ohm_m
+            depth = max(float(via.z_bot_nm - via.z_top_nm), 0.0)
+            t_eq = depth * (cov_lead * t_pb + (cov - cov_lead) * t_sn)
+            if stack.t_extra_nm is None:
+                stack.t_extra_nm = np.zeros(stack.masks.shape)
+            if stack.plug is None:
+                stack.plug = np.zeros_like(stack.masks)
+            for li in span:
+                m = stack.masks[li, i0:i1, j0:j1]
+                stack.t_extra_nm[li, i0:i1, j0:j1] += np.where(m, t_eq, 0.0)
+                stack.plug[li, i0:i1, j0:j1] |= m & (cov > 0.5)
+            continue
+
         if stack.thick_scale is None:
             stack.thick_scale = np.ones(stack.masks.shape)
-        for li in _via_span(problem, via):
+        for li in span:
             if via.kind == "via" and problem.vias_capped and li in outer \
                     and via.drill_nm <= problem.cap_max_drill_nm:
                 ratio = min(problem.cap_plating_nm

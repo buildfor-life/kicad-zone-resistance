@@ -107,9 +107,15 @@ SWIG API. Requires KiCad **10.0.1+**.
   holds the **component lead** (a cylinder of drill −
   `THT_LEAD_CLEARANCE_MM`, resistivity `THT_LEAD_RHO_OHM_M`, copper by
   default; raise it for brass/steel leads) **plus solder** in the
-  remaining annulus, both in parallel with the plating. The mouth
-  copper stays conducting: it stands in for the solder plug, which is
-  worth far more than the foil, so this is conservative. The pad face
+  remaining annulus, both in parallel with the plating. The filled
+  hole also conducts **in-plane on every spanned layer** (component
+  side and inner layers included): the mouth keeps its copper and
+  additionally carries the plug — lead disc plus solder bore — as
+  conduction-equivalent copper of the **full hole depth** (the pin
+  continues beyond both mouths, so each layer sees the whole plug
+  cross-section). The joint is side-symmetric except for the solder:
+  coat and cone on the solder side only. On the raster map these
+  mouths render in a darker tin color. The pad face
   gets the average-thickness solder coat (exact pad shape) and the
   protruding-lead cone (see barrel contacts below; on oblong pads the
   cone tapers to the pad's short dimension). **Slotted (oval) holes**

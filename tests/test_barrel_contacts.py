@@ -11,7 +11,7 @@ from fill_resistance.geometry import (Electrode, Polygon, ViaLink,
                                       contact_solder_buildups, load_problem,
                                       problem_from_json, problem_to_json,
                                       save_problem, tht_joint_buildups)
-from tests.util import NM, make_problem, rect_mm, ring_mm
+from tests.util import NM, make_multilayer, make_problem, rect_mm, ring_mm
 
 PLATE20 = [(0, 0), (20, 0), (20, 20), (0, 20)]
 
@@ -237,7 +237,9 @@ def test_stitching_pad_joint():
 
 def test_cone_not_doubled_at_contact():
     """A contact THT pad also appears in the net's pad list (ViaLink):
-    the cone and coat must be applied once, not squared/stacked."""
+    the cone and coat must be applied once, not squared/stacked. The
+    hole plug (this synthetic barrel spans z = -1..1, so 2 nm of lead)
+    ADDS to the cone at the mouth instead of multiplying it."""
     p = make_problem([(PLATE20, [])],
                      rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
     p.electrodes1 = [_barrel(10, 10, drill_mm=1.0, pad_mm=2.4, solder=True,
@@ -247,8 +249,9 @@ def test_cone_not_doubled_at_contact():
     assert contact_solder_buildups(p) == ["F.Cu"]
     assert tht_joint_buildups(p) == []       # contact center is skipped
     stack = raster.rasterize_stack(p, 0.1 * NM)
-    wall = 1.0 + p.tht_protrusion_nm \
-        * (p.rho_ohm_m / p.solder_rho_ohm_m) / p.layers[0].thickness_nm
+    t_cone = p.tht_protrusion_nm * (p.rho_ohm_m / p.solder_rho_ohm_m)
+    t_plug = 2.0 * (p.rho_ohm_m / p.tht_lead_rho_ohm_m)
+    wall = 1.0 + (t_cone + t_plug) / p.layers[0].thickness_nm
     assert stack.thick_scale.max() == pytest.approx(wall, rel=1e-12)
 
 
@@ -394,6 +397,51 @@ def test_slot_cone_follows_slot():
                       1.0 + t_eq / p.layers[0].thickness_nm, 1.0)
     assert np.allclose(stack.thick_scale[0], expect, rtol=1e-12)
     assert stack.thick_scale[0].max() > 3.0
+
+
+def test_plug_conducts_on_component_side():
+    """A populated THT pad's filled hole (lead + solder plug) conducts
+    IN-PLANE across the mouth on EVERY spanned layer - the component
+    side is not bare foil. Each layer carries the FULL hole depth (the
+    pin continues beyond both mouths, so the whole plug cross-section
+    spreads current at every layer; side-to-side the only difference
+    is the solder coat + cone), converted to conduction-equivalent
+    copper: lead disc at lead resistivity, solder bore around it."""
+    p = make_multilayer([[(PLATE20, [])], [(PLATE20, [])]],
+                        rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    p.vias = [ViaLink(x=10 * NM, y=10 * NM, drill_nm=1_000_000, z_top_nm=-1,
+                      z_bot_nm=1 * NM + 1, kind="pad", pad_nm=2_400_000,
+                      solder_filled=True, protrusion_side="L0")]
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    c = stack.cell_of(10 * NM, 10 * NM)
+    assert stack.masks[0][c] and stack.masks[1][c]     # plugged, not open
+    assert stack.plug[0][c] and stack.plug[1][c]       # drawn on both sides
+    t = p.layers[0].thickness_nm
+    # full hole depth z = -1 .. 1 mm + 1 on both layers; the mouth
+    # center lies inside the 0.75 mm lead (copper resistivity)
+    depth = 1 * NM + 2.0
+    t_cone = p.tht_protrusion_nm * (p.rho_ohm_m / p.solder_rho_ohm_m)
+    assert stack.thick_scale[0][c] == pytest.approx(
+        1.0 + (t_cone + depth * (p.rho_ohm_m / p.tht_lead_rho_ohm_m)) / t,
+        rel=1e-9)                                      # solder side: + cone
+    assert stack.thick_scale[1][c] == pytest.approx(
+        1.0 + depth * (p.rho_ohm_m / p.tht_lead_rho_ohm_m) / t, rel=1e-9)
+    # far from the joint: untouched foil
+    assert stack.thick_scale[1][stack.cell_of(14 * NM, 10 * NM)] == 1.0
+
+    # clearance swallowing the bore -> no lead, solder-only plug
+    p.tht_lead_clearance_nm = 1_000_000
+    s_sn = raster.rasterize_stack(p, 0.1 * NM)
+    assert s_sn.thick_scale[1][c] == pytest.approx(
+        1.0 + depth * (p.rho_ohm_m / p.solder_rho_ohm_m) / t, rel=1e-9)
+    p.tht_lead_clearance_nm = 250_000
+
+    # a DNP pad still cuts an open hole and gets no plug
+    p.vias[0].solder_filled = False
+    p.vias[0].protrusion_side = None
+    s2 = raster.rasterize_stack(p, 0.1 * NM)
+    assert not s2.masks[0][c] and not s2.masks[1][c]
+    assert s2.plug is None
 
 
 def test_slot_barrel_resistance():

@@ -52,6 +52,7 @@ _E2_COLOR = "#2f6fb0"
 _VIA_COLOR = "#2d6b45"
 _PAD_COLOR = "#5b4a8a"   # THT pad barrels (kind='pad'), violet-ink
 _SOLDER = "#9aa3ad"      # tin-gray: solder buildup areas
+_PLUG = "#6e7885"        # darker tin: solder-filled THT holes (lead + plug)
 _MESH = "#a56c33"        # darker copper: adaptive leaf boundaries
 _INK = "#3a3a3a"
 _GRID_INK = "#b8b4ae"
@@ -224,8 +225,9 @@ def _injection_area_labels(ax, li, layer_name, problem, result):
 
 def fig_raster(stack, e1, e2, problem, result=None):
     cmap = ListedColormap([_BG, _COPPER, _E1_COLOR, _E2_COLOR, _SOLDER,
-                           _MESH])
+                           _MESH, _PLUG])
     has_buildup = stack.buildup is not None and stack.buildup.any()
+    has_plug = stack.plug is not None and stack.plug.any()
     has_mesh = stack.mesh is not None and stack.mesh.any()
 
     def paint(ax, li):
@@ -233,11 +235,13 @@ def fig_raster(stack, e1, e2, problem, result=None):
         codes[stack.masks[li]] = 1
         if has_buildup:
             codes[stack.buildup[li]] = 4
+        if has_plug:
+            codes[stack.plug[li]] = 6
         if has_mesh:
             codes[stack.mesh[li]] = 5
         codes[e1[li]] = 2
         codes[e2[li]] = 3
-        ax.imshow(codes, cmap=cmap, vmin=0, vmax=5, origin="upper",
+        ax.imshow(codes, cmap=cmap, vmin=0, vmax=6, origin="upper",
                   extent=stack.extent_mm(), interpolation="nearest")
         _via_markers(ax, problem, problem.layers[li])
         if result is not None and (result.part_currents1
@@ -264,6 +268,9 @@ def fig_raster(stack, e1, e2, problem, result=None):
                       f"({problem.solder_thickness_nm / 1000:.0f} µm"
                       + (f" + {problem.extra_cu_nm / 1000:.0f} µm Cu"
                          if problem.extra_cu_nm else "") + ")"))
+        if has_plug:
+            handles.append(Patch(
+                fc=_PLUG, label="solder-filled THT hole (lead + solder)"))
         if result is not None and (result.part_currents1
                                    or result.part_currents2):
             entries = ([("+", _E1_COLOR, i, amps)
