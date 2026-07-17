@@ -50,6 +50,7 @@ _COPPER = "#c98b4e"
 _E1_COLOR = "#c8385a"
 _E2_COLOR = "#2f6fb0"
 _VIA_COLOR = "#2d6b45"
+_PAD_COLOR = "#5b4a8a"   # THT pad barrels (kind='pad'), violet-ink
 _SOLDER = "#9aa3ad"      # tin-gray: solder buildup areas
 _MESH = "#a56c33"        # darker copper: adaptive leaf boundaries
 _INK = "#3a3a3a"
@@ -187,10 +188,14 @@ def _electrode_labels(ax, stack, e1_l, e2_l):
 
 
 def _via_markers(ax, problem, layer):
-    xs = [v.x * 1e-6 for v in problem.vias if v.spans(layer.z_nm)]
-    ys = [v.y * 1e-6 for v in problem.vias if v.spans(layer.z_nm)]
-    if xs:
-        ax.plot(xs, ys, ".", ms=2.5, color=_VIA_COLOR, alpha=0.7)
+    """One dot per barrel spanning the layer: vias green, THT pad
+    barrels violet (same joint markers, different physics)."""
+    for kind, color in (("via", _VIA_COLOR), ("pad", _PAD_COLOR)):
+        pts = [(v.x * 1e-6, v.y * 1e-6) for v in problem.vias
+               if v.kind == kind and v.spans(layer.z_nm)]
+        if pts:
+            xs, ys = zip(*pts)
+            ax.plot(xs, ys, ".", ms=2.5, color=color, alpha=0.7)
 
 
 def area_tag(sign: str, index: int) -> str:
@@ -243,8 +248,12 @@ def fig_raster(stack, e1, e2, problem, result=None):
             _electrode_labels(ax, stack, e1[li], e2[li])
 
     def finalize(fig, rows):
-        handles = [Patch(fc=_COPPER, label="copper"),
-                   Patch(fc=_VIA_COLOR, label="vias")]
+        kinds = {v.kind for v in problem.vias}
+        handles = [Patch(fc=_COPPER, label="copper")]
+        if "via" in kinds or not kinds:
+            handles.append(Patch(fc=_VIA_COLOR, label="vias"))
+        if "pad" in kinds:
+            handles.append(Patch(fc=_PAD_COLOR, label="THT pad barrels"))
         if has_mesh:
             handles.append(Patch(fc=_MESH,
                                  label="adaptive mesh (coarse leaves)"))
