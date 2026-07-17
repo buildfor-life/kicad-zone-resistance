@@ -35,11 +35,12 @@ jobs:
             dist/*.zip
             dist/metadata-registry.json
 
-      - name: Create release with the zip attached
+      - name: Create release with the zip, registry metadata and figures
         if: startsWith(github.ref, 'refs/tags/v')
         uses: akkuman/gitea-release-action@b8d9144f302c68610911db1aaf722708d5c02d94 # v1
         with:
           files: |
             dist/*.zip
             dist/metadata-registry.json
+            docs/img/*.png
           token: ${{ secrets.GITEA_TOKEN }}
