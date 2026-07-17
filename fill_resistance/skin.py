@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import cmath
 import math
+import re
 
 MU0 = 4e-7 * math.pi
 
@@ -58,11 +59,25 @@ def resistance_factor(thickness_m: float, freq_hz: float,
             / (rho_ohm_m / thickness_m))
 
 
+def normalize_decimal(text: str) -> str:
+    """Accept a European decimal comma ('1,5' -> '1.5'); reject
+    thousands-separator commas ('1,500' would silently become 1.5,
+    a 1000x error that propagates unnoticed into the result)."""
+    if "," in text:
+        if "." in text or text.count(",") > 1 \
+                or re.search(r",\d{3}(?=\D|$)", text):
+            raise ValueError(
+                f"ambiguous comma in '{text}': use '.' as the decimal "
+                "separator and no thousands separators")
+        text = text.replace(",", ".")
+    return text
+
+
 def parse_frequency(text: str) -> float:
     """'0', '100k', '1.5M', '142500' -> Hz; empty -> 0 (DC).
-    Raises ValueError on unparseable or negative input (a typo silently
-    becoming DC would mislabel the result)."""
-    t = text.strip().lower().replace(",", ".").removesuffix("hz").strip()
+    Raises ValueError on unparseable, ambiguous or negative input (a
+    typo silently becoming DC would mislabel the result)."""
+    t = normalize_decimal(text.strip().lower()).removesuffix("hz").strip()
     if not t:
         return 0.0
     mult = 1.0

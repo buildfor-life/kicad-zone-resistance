@@ -94,6 +94,7 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
 
     # --- leaves per layer -------------------------------------------------
     t0 = time.perf_counter()
+    links, dead_barrels = sv._barrel_links(stack, problem)
     keep = e1 | e2
     if stack.chain is not None:
         keep |= stack.chain
@@ -101,6 +102,13 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
         keep |= stack.buildup
     if stack.thick_scale is not None:
         keep |= stack.thick_scale != 1.0
+    # pin every barrel attachment cell fine: a point-like barrel
+    # injection into a coarse leaf makes the whole leaf equipotential
+    # and deletes the local spreading resistance (via fields read up
+    # to ~13% low otherwise); the guard ring then grades around it
+    for _vi, la, ia_, ja_, lb, ib_, jb_, _r in links:
+        keep[la, ia_, ja_] = True
+        keep[lb, ib_, jb_] = True
     mb = _max_block(stack.h_nm)
     grids = [quadtree.build_leaves(stack.masks[li], keep_fine=keep[li],
                                    max_block=mb,
@@ -181,7 +189,6 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
             xx.append(np.full(k, -1, dtype=np.int8))
             ee.append(np.full(k, -1, dtype=np.int16))
 
-    links, dead_barrels = sv._barrel_links(stack, problem)
     for vi, la, ia_, ja_, lb, ib_, jb_, r_dc in links:
         na = offs[la] + grids[la].id_grid[ia_, ja_]
         nb = offs[lb] + grids[lb].id_grid[ib_, jb_]

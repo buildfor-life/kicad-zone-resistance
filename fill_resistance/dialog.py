@@ -38,7 +38,7 @@ class Selection:
     include_tracks: bool = True
     vias_capped: bool = True
     cap_max_drill_mm: float = 0.5
-    adaptive: bool = False
+    adaptive: bool = True
 
 
 class _Dialog(QDialog):
@@ -81,7 +81,7 @@ class _Dialog(QDialog):
 
         self.adaptive_check = QCheckBox(
             "adaptive cells (coarsen plane interiors; faster on large "
-            "boards, corrected to ≲0.1 % of the uniform grid)")
+            "boards, corrected to ≲0.03 % of the uniform grid)")
         self.adaptive_check.setChecked(config.ADAPTIVE_CELLS)
         form.addRow("Grid:", self.adaptive_check)
 
@@ -187,10 +187,13 @@ class _Dialog(QDialog):
             raise ValueError("Check at least one layer.")
 
         def number(edit: QLineEdit, name: str) -> float:
+            text = edit.text().strip()
             try:
-                return float(edit.text().strip().replace(",", "."))
-            except ValueError:
-                raise ValueError(f"{name}: '{edit.text()}' is not a number.")
+                return float(skin.normalize_decimal(text))
+            except ValueError as exc:
+                if "separator" in str(exc):
+                    raise ValueError(f"{name}: {exc}")
+                raise ValueError(f"{name}: '{text}' is not a number.")
 
         current = number(self.current_edit, "Test current")
         if current <= 0:
