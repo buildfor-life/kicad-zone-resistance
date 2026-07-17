@@ -416,7 +416,7 @@ def fig_power(result, stack, e1, e2, problem):
 def fig_error(message: str):
     fig, ax = plt.subplots(figsize=(9, 4.5), layout="constrained")
     ax.axis("off")
-    ax.set_title("Fill Resistance — ERROR", color="#b02a2a",
+    ax.set_title("Fill Resistance - ERROR", color="#b02a2a",
                  fontsize=14, fontweight="bold", loc="left")
     wrapped = "\n".join(
         textwrap.fill(line, width=90) for line in message.splitlines()

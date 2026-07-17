@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 dist/
+
+# local AI-tooling artifacts, never publish
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json
+CLAUDE.md
+ruvector.db

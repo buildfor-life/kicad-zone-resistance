@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 COPY_EXCLUDE = {".venv", ".git", "tests", "tools", "dist", "resources",
                 "__pycache__", ".pytest_cache", "conftest.py", "deploy.ps1",
-                ".gitignore", "metadata.json"}
+                ".gitignore", "metadata.json", "pyproject.toml", "uv.lock"}
 
 
 def plugins_dir(kicad_version: str) -> Path:

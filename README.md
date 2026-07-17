@@ -6,8 +6,8 @@ between two contacts, **single- or multi-layer**: the chosen net's fills
 solved as coupled finite-difference sheets linked by the net's **via
 and through-hole-pad barrels** (18 µm plating, configurable). At a user-set **frequency** the exact 1D foil/barrel
 skin-effect correction is applied (AC results are a rigorous lower
-bound — see *Model & limits*). Shows per-layer rasterized maps,
-potential, current density, and **power density**, reports **per-via
+bound; see *Model & limits*). Shows per-layer rasterized maps,
+potential, current density, and **power density**, and reports **per-via
 currents** (via ampacity!) and total dissipation at a **selectable test
 current**. PNGs + a text summary are saved per run.
 
@@ -15,7 +15,7 @@ current**. PNGs + a text summary are saved per run.
 *Real output on a synthetic two-layer net: current from a soldered
 THT-pad contact (V+, injected at the drill-wall ring) squeezes past a
 notch in the F.Cu pour, transfers through the stitching-via field into
-the B.Cu pour and leaves at the V− lug — per-via currents and the
+the B.Cu pour and leaves at the V− lug. Per-via currents and the
 hottest via are reported.*
 
 ![Potential on the two-layer demo net](docs/img/demo-potential.png)
@@ -35,7 +35,7 @@ SWIG API. Requires KiCad **10.0.1+**.
    on Windows or `/usr/bin/python3` on Linux (after a 9→10 upgrade it
    can point at KiCad 9).
 3. **Deploy** (dev checkout; end users install the PCM zip instead, see
-   *Packaging*):
+   *Packaging / publishing*):
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy.ps1        # junction (dev)
    powershell -ExecutionPolicy Bypass -File deploy.ps1 -Mode Copy
@@ -52,13 +52,13 @@ SWIG API. Requires KiCad **10.0.1+**.
 ## Usage
 
 1. Mark the current-injection terminals. Each terminal may have
-   **multiple parts** (all merged into one externally-bonded contact):
+   **multiple parts** (all merged into one externally bonded contact):
    - **V+ rectangles on `User.1`**, **V− rectangles on `User.2`**
      (marker layers, configurable via `ELECTRODE_POS_LAYER` /
      `ELECTRODE_NEG_LAYER`), any number per side, axis-aligned;
    - **pads and vias** (SMD pad: real copper shape on its own layer;
-     through-hole pads and vias become **barrel contacts** — the current
-     enters at the drill wall on every spanned layer, see below) —
+     through-hole pads and vias become **barrel contacts**: the current
+     enters at the drill wall on every spanned layer, see below);
      selected pads/vias fill a side that has no rectangles;
    - legacy: exactly 2 selected contacts with no marker rectangles still
      works; empty selection scans the whole board's marker layers.
@@ -93,7 +93,7 @@ SWIG API. Requires KiCad **10.0.1+**.
   dialog's **"capped up to drill"** threshold (default
   `CAP_MAX_DRILL_MM = 0.5`) keep open mouths even with capping
   selected. Layer-to-layer the cap never matters at DC (it is in
-  parallel with the annular-ring contact, not in series) — the checkbox
+  parallel with the annular-ring contact, not in series), so the checkbox
   only affects in-plane conduction across outer-layer mouths. Sub-cell
   mouths scale their cells' sheet conductance by the true covered
   fraction (4×4 supersampling), so coarse grids see the correct small
@@ -103,18 +103,18 @@ SWIG API. Requires KiCad **10.0.1+**.
   oblong pads, fetched from KiCad; the outer shape stands in for inner
   rings) are stamped onto every included layer, and every **populated**
   pad carries its full **soldered joint** on its SOLDER side (opposite
-  the component; the component-side pad face stays bare): the hole
+  the component; the component-side pad face stays bare). The hole
   holds the **component lead** (a cylinder of drill −
   `THT_LEAD_CLEARANCE_MM`, resistivity `THT_LEAD_RHO_OHM_M`, copper by
-  default — raise it for brass/steel leads) **plus solder** in the
-  remaining annulus, both in parallel with the plating; the mouth
-  copper stays conducting (it stands in for the plug — conservative,
-  the plug is worth far more than the foil); the pad face gets the
-  average-thickness solder coat (exact pad shape) and the
+  default; raise it for brass/steel leads) **plus solder** in the
+  remaining annulus, both in parallel with the plating. The mouth
+  copper stays conducting: it stands in for the solder plug, which is
+  worth far more than the foil, so this is conservative. The pad face
+  gets the average-thickness solder coat (exact pad shape) and the
   protruding-lead cone (see barrel contacts below; on oblong pads the
   cone tapers within the inscribed circle). Whether a hole is a via or
   a THT pad, the owning footprint's side, and its **Do not populate**
-  flag are all read from KiCad — **DNP pads** get an **open hole** and
+  flag are all read from KiCad. **DNP pads** get an **open hole** and
   a plating-only barrel, no joint. At f > 0 the thickness scaling is
   applied multiplicatively to the skin-corrected sheet conductance
   (approximation). Per layer a barrel attaches to
@@ -194,7 +194,7 @@ SWIG API. Requires KiCad **10.0.1+**.
   (`SKIN_SIDES = 1` in config: plane facing a return plane; `2` =
   isolated foil), and the analogous correction for the 18 µm barrel wall.
   Enter one frequency per run (e.g. a switching harmonic, with its RMS
-  amplitude as the test current) — suffixes `k`/`M` accepted.
+  amplitude as the test current); suffixes `k`/`M` are accepted.
   **Caveat:** only through-thickness crowding is modeled. Lateral
   (proximity-effect) redistribution needs a magneto-quasistatic solver
   and is not captured — since the resistance-driven distribution is the
@@ -206,15 +206,15 @@ SWIG API. Requires KiCad **10.0.1+**.
   not the geometric foil thickness.
 - 5-point FDM per layer on an auto-sized shared grid (~2 M fine cells
   with the uniform grid; ~8 M with the adaptive grid, whose unknown
-  count no longer scales with them). Direct sparse solve up to 500 k
-  unknowns, AMG-preconditioned CG (pyamg) above — Jacobi-CG if pyamg is
-  missing. Discretization error typically ≲ 2 % at defaults — halve the
-  cell size and compare to judge convergence.
+  count no longer scales with the fine-cell count). Direct sparse solve
+  up to 500 k unknowns, AMG-preconditioned CG (pyamg) above (Jacobi-CG
+  if pyamg is missing). Discretization error typically ≲ 2 % at
+  defaults; halve the cell size and compare to judge convergence.
 - **Adaptive cells** (dialog checkbox, **on by default**;
   `ADAPTIVE_CELLS`):
   solves on a 2:1-balanced quadtree — fine cells at copper boundaries,
   electrodes, traces, via mouths and buildup, blocks up to
-  `ADAPTIVE_MAX_CELL_UM` (2 mm) in plane interiors (`ADAPTIVE_GUARD`
+  `ADAPTIVE_MAX_CELL_UM` (1 mm) in plane interiors (`ADAPTIVE_GUARD`
   sets the clearance a block needs to grow). The **minimum element size
   is the grid cell size itself** (auto / dialog / `CELL_UM_OVERRIDE`);
   the uniform limit reproduces the normal grid exactly. Large
@@ -246,20 +246,20 @@ accordingly more trustworthy than absolute numbers.
 Every run writes `geometry_dump.json`; re-solve without KiCad:
 
 ```powershell
-.venv\Scripts\python.exe -m fill_resistance.standalone dump.json `
+uv run python -m fill_resistance.standalone dump.json `
     [--current 40] [--cell-um 50] [--layers F.Cu,In1.Cu] [--no-show] `
     [--out DIR] [--force-iterative]
 ```
 
-Dev environment, tests, headless extraction (Windows shown; on
-Linux/macOS use `.venv/bin/python`):
+Dev environment, tests, headless extraction — [uv](https://docs.astral.sh/uv/)
+manages the venv from `pyproject.toml`/`uv.lock` (`requirements.txt`
+stays: KiCad builds the plugin's runtime venv from it):
 
 ```powershell
-uv venv --python 3.11 .venv
-uv pip install --python .venv\Scripts\python.exe kicad-python numpy scipy pyamg matplotlib pytest
-.venv\Scripts\python.exe -m pytest tests -q          # incl. exact analytic cases
-.venv\Scripts\python.exe tools\api_probe.py          # IPC API probe vs live KiCad
-.venv\Scripts\python.exe -m fill_resistance.board_io dump.json [NET]  # extract only
+uv sync                                              # one-time env setup
+uv run pytest -q                                     # incl. exact analytic cases
+uv run python tools/api_probe.py                     # IPC API probe vs live KiCad
+uv run python -m fill_resistance.board_io dump.json [NET]  # extract only
 ```
 
 ## Packaging / publishing
@@ -272,7 +272,7 @@ filled in. To publish: upload the zip to a release, set `download_url`
 registry copy as `packages/th.co.b4l.fill-resistance/metadata.json` in a
 merge request to <https://gitlab.com/kicad/addons/metadata>. Icons are
 regenerated with `python tools/gen_icons.py`; the README figures in
-`docs/img/` with `.venv\Scripts\python.exe tools\gen_readme_figs.py`
+`docs/img/` with `uv run python tools/gen_readme_figs.py`
 (real solver output on small synthetic boards, plus the hand-drawn
 hole cross-section).
 
@@ -294,18 +294,20 @@ GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 ## LLM disclaimer
 
-This plugin was developed with an LLM — Anthropic's **Claude** (Claude
+This plugin was developed with an LLM: Anthropic's **Claude** (Claude
 Code, model Claude Fable 5). The physics model, solver, tests, tooling
-and this documentation (including the figures, which are generated by
-the solver itself) were written by the model, feature by feature, under
-human direction and review (janik / B4L); commits carry a
-`Co-Authored-By: Claude` trailer.
+and this documentation (including the figures; all but the hand-drawn
+hole cross-section are generated by the solver itself) were written by
+the model, feature by feature, under human direction and review
+(janik / B4L); most commits carry a `Co-Authored-By: Claude` trailer.
 
 What keeps this honest: the test suite pins the numerics to exact
 analytic references (strip and annulus resistances, the acosh spreading
 resistance of two circular contacts, skin-effect limits, power-balance
-identities) and to convergence/regression checks — run it with
-`pytest tests`. Nevertheless, an LLM wrote this: read *Model & limits*
+identities) and to convergence/regression checks; run it with
+`uv run pytest`. Real boards were measured against a UT3513+ micro-ohm
+meter (see *Measured vs. computed* above). Nevertheless, an LLM wrote
+this: read *Model & limits*
 critically, treat surprising numbers with the usual engineering
 suspicion, and cross-check against a hand estimate before trusting a
 result with hardware. Bug reports are very welcome.

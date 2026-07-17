@@ -1,0 +1,28 @@
+# Development environment only (uv sync / uv run). The KiCad plugin
+# manager builds the runtime venv itself from requirements.txt — keep
+# the dependency list there in sync with [project.dependencies].
+[project]
+name = "fill-resistance"
+version = "1.1.0"
+description = "DC/AC resistance of copper zone fills and traces between two contacts (KiCad 10 plugin)"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
+dependencies = [
+    "kicad-python>=0.7.0",
+    "numpy",
+    "scipy",
+    "pyamg",
+    "matplotlib",
+    "PySide6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

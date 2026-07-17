@@ -30,7 +30,8 @@ if ($Mode -eq 'Junction') {
     New-Item -ItemType Junction -Path $dst -Target $src | Out-Null
     Write-Host "junction created: $dst -> $src"
 } else {
-    $exclude = @('.venv', '.git', 'tests', 'tools', '__pycache__', '.pytest_cache')
+    $exclude = @('.venv', '.git', 'tests', 'tools', '__pycache__', '.pytest_cache',
+                 'pyproject.toml', 'uv.lock')
     New-Item -ItemType Directory -Force $dst | Out-Null
     Get-ChildItem $src -Force | Where-Object { $exclude -notcontains $_.Name } |
         ForEach-Object { Copy-Item $_.FullName -Destination $dst -Recurse -Force }
