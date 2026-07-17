@@ -11,6 +11,13 @@ potential, current density, and **power density**, reports **per-via
 currents** (via ampacity!) and total dissipation at a **selectable test
 current**. PNGs + a text summary are saved per run.
 
+![Current density on a two-layer demo net](docs/img/demo-current.png)
+*Real output on a synthetic two-layer net: current from a soldered
+THT-pad contact (V+, injected at the drill-wall ring) squeezes past a
+notch in the F.Cu pour, transfers through the stitching-via field into
+the B.Cu pour and leaves at the V− lug — per-via currents and the
+hottest via are reported.*
+
 Uses the KiCad **IPC API** (`kicad-python` / `kipy`), not the deprecated
 SWIG API. Requires KiCad **10.0.1+**.
 
@@ -111,6 +118,12 @@ SWIG API. Requires KiCad **10.0.1+**.
   spokes** still connect; wider antipads do not, and the barrel bridges
   the layers above/below with the full barrel length. Barrels that reach
   fill on fewer than two layers carry no current and are reported.
+
+  ![How drilled holes are modeled — cross-section](docs/img/hole-model.png)
+  *The four hole types: capped small via, open large via, populated THT
+  pad with its full solder joint (lead ∥ solder ∥ plating in the hole,
+  one-sided pad coat, protruding-lead solder cone), and a DNP THT pad.*
+
 - The net's **traces** (straight and arc tracks, exact outline polygons
   incl. rounded ends) conduct together with the fills — dialog checkbox,
   on by default (`INCLUDE_TRACKS`). Traces narrower than
@@ -164,6 +177,12 @@ SWIG API. Requires KiCad **10.0.1+**.
   terminals (e.g. planes joined only through the bolted lugs), only the
   equipotential model is well-defined; the uniform model stops with an
   error instead of prescribing an arbitrary split.
+
+  ![The two contact models bracket a real contact](docs/img/contact-models.png)
+  *|J| around the same 3×3 mm contact under both models: the ideal
+  bonded lug crowds the current at the contact edges (no in-sheet
+  current inside an equipotential region), the pressed conductor ramps
+  it across the contact area.*
 - Fields are reported at the dialog's test current; power scales with I².
 - **Skin effect (f > 0)**: per-layer effective sheet resistance from the
   exact 1D foil-diffusion solution `Zs = τρ·coth(τt)`, `τ = (1+j)/δ`
@@ -202,6 +221,12 @@ SWIG API. Requires KiCad **10.0.1+**.
   uniform grid ≲ 0.03 %, with the power-balance identity intact. All
   fields are expanded back to the fine grid for the maps and reports.
 
+  ![Rasterized map with the adaptive mesh overlay](docs/img/demo-raster.png)
+  *The raster map of the demo net: quadtree leaves drawn on the copper
+  (fine at boundaries, electrodes, via mouths and pads; coarse blocks
+  in plane interiors), the tin-gray solder coat of the THT-pad contact
+  P1, and the via field with its pad copper.*
+
 ## Offline / development
 
 Every run writes `geometry_dump.json`; re-solve without KiCad:
@@ -232,7 +257,10 @@ filled in. To publish: upload the zip to a release, set `download_url`
 (and the `homepage` resource in `metadata.json`), then submit the
 registry copy as `packages/th.co.b4l.fill-resistance/metadata.json` in a
 merge request to <https://gitlab.com/kicad/addons/metadata>. Icons are
-regenerated with `python tools/gen_icons.py`.
+regenerated with `python tools/gen_icons.py`; the README figures in
+`docs/img/` with `.venv\Scripts\python.exe tools\gen_readme_figs.py`
+(real solver output on small synthetic boards, plus the hand-drawn
+hole cross-section).
 
 ## License
 
