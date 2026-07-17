@@ -137,9 +137,13 @@ SWIG API. Requires KiCad **10.0.1+**.
   series resistance carries no discretization error and no cell-size
   tuning is needed for thin traces. 1D-modeled traces show potential,
   power density, and |J| (the true in-trace density from the link
-  currents, |ΔV|/(ρ·Δl)). THT pad copper is part of the conductor
-  (exact shapes, see above); **SMD** pad copper other than the
-  selected contacts is still **not**.
+  currents, |ΔV|/(ρ·Δl)). Pad copper is part of the conductor: THT pad
+  shapes are stamped on every included layer (see above), **SMD** pad
+  shapes on their own layer (`INCLUDE_SMD_PADS`) — pads are the
+  junctions where traces and thermal-relief spokes actually meet, so
+  without them a multi-track junction necks down to the accidental
+  overlap of the track ends. Dead-end pads (component terminals) are
+  dropped with the other copper not connected to both contacts.
 - **Solder buildup on mask openings** (dialog checkbox, **off by
   default**; `INCLUDE_MASK_BUILDUP`): zones drawn on `F.Mask`/`B.Mask`
   are treated as mask openings that collect `SOLDER_THICKNESS_UM`

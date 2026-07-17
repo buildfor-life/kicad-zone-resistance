@@ -563,6 +563,29 @@ def gather_barrels(board: Board, net_name: str,
     return barrels
 
 
+def gather_smd_pad_copper(board: Board, net_name: str
+                          ) -> dict[str, list[Polygon]]:
+    """layer name -> exact copper shape(s) of every SMD (undrilled) pad
+    on the net. Pads are junctions: traces and thermal-relief spokes
+    meet ON the pad copper, and without it the junction necks down to
+    the accidental overlap of the track ends - or is severed outright.
+    Dead-end pads (component terminals) become floating islands that
+    the solver's connectivity restriction drops. One API call per pad;
+    pads whose copper layer cannot be determined are skipped."""
+    shapes: dict[str, list[Polygon]] = {}
+    for pad in board.get_pads():
+        if pad.net is None or pad.net.name != net_name \
+                or _pad_drill_nm(pad) > 0:
+            continue
+        layer = _pad_default_contact(pad)      # SMD: its own copper layer
+        if layer == "all":
+            continue
+        polys = _pad_polygons(board, pad, layer)
+        if polys:
+            shapes.setdefault(layer, []).extend(polys)
+    return shapes
+
+
 def gather_tht_pad_copper(board: Board, net_name: str
                           ) -> dict[tuple[int, int], list[Polygon]]:
     """(x, y) -> exact copper shape(s) of every drilled (THT) pad on the
@@ -629,6 +652,19 @@ def build_problem(board: Board, net: str, layer_names: list[str],
             layer.polygons = list(layer.polygons) + extra
         print(f"{len(pad_shapes)} THT pad shape(s) stamped on every "
               f"included layer")
+    # SMD pad copper too: pads are the junctions where traces/spokes
+    # meet (also gives selected SMD-pad contacts their real copper)
+    smd_shapes = (gather_smd_pad_copper(board, net)
+                  if config.INCLUDE_SMD_PADS else {})
+    if smd_shapes:
+        n = 0
+        for layer in layers:
+            polys = smd_shapes.get(layer.layer_name, [])
+            if polys:
+                layer.polygons = list(layer.polygons) + polys
+                n += len(polys)
+        if n:
+            print(f"{n} SMD pad shape(s) stamped on their layers")
     included = {l.layer_name for l in layers}
     buildup_list = [
         SurfaceBuildup(layer_name=name, polygons=polys)

@@ -259,3 +259,25 @@ def test_track_unions_with_fill():
     assert int(s_both.masks.sum()) > int(s_plate.masks.sum())
     assert r_both.R_ohm < 0.75 * r_plate.R_ohm    # bridge shortens the detour
     assert r_both.power_balance_rel < 1e-9
+
+
+def test_pad_copper_bridges_track_junction():
+    """Two traces meet ON an SMD pad, their rounded ends 0.5 mm apart:
+    the junction only exists through the pad copper (board_io stamps
+    the net's pad shapes onto their layers). Without the pad the net
+    is severed - at both track models (rasterized and 1D chain)."""
+    from fill_resistance.errors import ConnectivityError
+    tabs = [[(0, 4.5), (1, 4.5), (1, 5.5), (0, 5.5)],
+            [(19, 4.5), (20, 4.5), (20, 5.5), (19, 5.5)]]
+    pad = [(9.25, 4.4), (10.75, 4.4), (10.75, 5.6), (9.25, 5.6)]
+    segs = [_seg([(0.5, 5), (9.5, 5)], 0.5),
+            _seg([(10.5, 5), (19.5, 5)], 0.5)]
+    r1, r2 = (0, 4.5, 1, 5.5), (19, 4.5, 20, 5.5)
+
+    for h in (0.1, 0.25):          # 5 cells: outlines; 2 cells: 1D chains
+        res, _ = _solve(_seg_problem(segs, r1, r2, fills_mm=tabs + [pad]), h)
+        # ~36 squares of 0.5 mm trace + tabs/pad: sanity-band the value
+        assert 0.007 < res.R_ohm < 0.011
+
+        with pytest.raises(ConnectivityError):
+            _solve(_seg_problem(segs, r1, r2, fills_mm=tabs), h)

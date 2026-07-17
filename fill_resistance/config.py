@@ -31,6 +31,11 @@ CAP_PLATING_UM = 15.0           # cap plating thickness (fab spec)
 CAP_MAX_DRILL_MM = 0.5          # fab caps only small vias: drills above this
                                 # stay open even with VIAS_CAPPED
                                 # (dialog-settable)
+INCLUDE_SMD_PADS = True         # the net's SMD pad copper conducts too (exact
+                                # shapes on the pad's layer): pads are the
+                                # junctions where traces/spokes meet, and
+                                # selected pad contacts get their real copper.
+                                # Dead-end pads are dropped as floating islands
 INCLUDE_TH_PADS = True          # plated through-hole pads stitch layers too;
                                 # their holes are modeled solder-filled (a
                                 # soldered component lead), so the solder core
