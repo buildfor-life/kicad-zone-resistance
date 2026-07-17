@@ -23,7 +23,7 @@ from scipy import ndimage
 
 from . import config
 from .errors import ElectrodeError, GridSizeError
-from .geometry import Electrode, Problem, Rect
+from .geometry import Electrode, Problem, Rect, slot_distance
 
 # 4-connectivity: matches the in-plane 5-point stencil of the solver
 _STRUCT4 = ndimage.generate_binary_structure(2, 1)
@@ -270,29 +270,31 @@ def _paint_lead_fillets(stack: RasterStack, problem: Problem) -> None:
             y = (e.rect.y0 + e.rect.y1) / 2.0
         seen.add((int(x), int(y)))
         if e.solder and e.protrusion_side:
-            # oblong pads: taper to the inscribed circle (conservative)
+            # oblong pads: taper from the (slot) wall to the inscribed
+            # dimension (conservative)
             jobs.append((x, y, e.drill_nm, e.pad_min_nm or e.pad_nm,
-                         e.protrusion_side))
+                         e.protrusion_side, e.slot_dx_nm, e.slot_dy_nm))
     for v in problem.vias:
         if v.kind == "pad" and v.solder_filled and v.protrusion_side \
                 and (v.x, v.y) not in seen:
             jobs.append((v.x, v.y, v.drill_nm, v.pad_min_nm or v.pad_nm,
-                         v.protrusion_side))
+                         v.protrusion_side, v.slot_dx_nm, v.slot_dy_nm))
 
-    for x, y, drill_nm, pad_nm, side in jobs:
+    for x, y, drill_nm, pad_nm, side, sdx, sdy in jobs:
         li = index.get(side)
         if li is None or pad_nm <= drill_nm:
             continue
         ra, rb = drill_nm / 2.0, pad_nm / 2.0
-        j0 = max(0, math.floor((x - rb - stack.x0_nm) / h))
-        j1 = min(nx, math.floor((x + rb - stack.x0_nm) / h) + 1)
-        i0 = max(0, math.floor((y - rb - stack.y0_nm) / h))
-        i1 = min(ny, math.floor((y + rb - stack.y0_nm) / h) + 1)
+        ex, ey = rb + abs(sdx), rb + abs(sdy)
+        j0 = max(0, math.floor((x - ex - stack.x0_nm) / h))
+        j1 = min(nx, math.floor((x + ex - stack.x0_nm) / h) + 1)
+        i0 = max(0, math.floor((y - ey - stack.y0_nm) / h))
+        i1 = min(ny, math.floor((y + ey - stack.y0_nm) / h) + 1)
         if i0 >= i1 or j0 >= j1:
             continue
         xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - x
         ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - y
-        r = np.sqrt(ys[:, None] ** 2 + xs[None, :] ** 2)
+        r = slot_distance(xs[None, :], ys[:, None], sdx, sdy)
         t_sn = H * np.clip((rb - r) / (rb - ra), 0.0, 1.0)
         t_eq = t_sn * (problem.rho_ohm_m / problem.solder_rho_ohm_m)
         factor = 1.0 + t_eq / problem.layers[li].thickness_nm
@@ -353,18 +355,20 @@ def _apply_via_mouths(stack: RasterStack, problem: Problem) -> None:
         if via.kind == "pad" and via.solder_filled:
             continue
         r = via.drill_nm / 2.0
-        j0 = max(0, math.floor((via.x - r - stack.x0_nm) / h))
-        j1 = min(nx, math.floor((via.x + r - stack.x0_nm) / h) + 1)
-        i0 = max(0, math.floor((via.y - r - stack.y0_nm) / h))
-        i1 = min(ny, math.floor((via.y + r - stack.y0_nm) / h) + 1)
+        ex, ey = r + abs(via.slot_dx_nm), r + abs(via.slot_dy_nm)
+        j0 = max(0, math.floor((via.x - ex - stack.x0_nm) / h))
+        j1 = min(nx, math.floor((via.x + ex - stack.x0_nm) / h) + 1)
+        i0 = max(0, math.floor((via.y - ey - stack.y0_nm) / h))
+        i1 = min(ny, math.floor((via.y + ey - stack.y0_nm) / h) + 1)
         if i0 >= i1 or j0 >= j1:
             continue
         xs = stack.x0_nm + (np.arange(j0, j1)[:, None] + sub[None, :]) * h \
             - via.x
         ys = stack.y0_nm + (np.arange(i0, i1)[:, None] + sub[None, :]) * h \
             - via.y
-        cov = ((ys[:, None, :, None] ** 2 + xs[None, :, None, :] ** 2)
-               <= r * r).mean(axis=(2, 3))
+        cov = (slot_distance(xs[None, :, None, :], ys[:, None, :, None],
+                             via.slot_dx_nm, via.slot_dy_nm)
+               <= r).mean(axis=(2, 3))
         if not (cov > 0).any():
             continue                            # mouth far smaller than h
         if stack.thick_scale is None:
@@ -477,7 +481,8 @@ def _electrode_cells2d(stack: RasterStack, e: Electrode) -> np.ndarray:
 def _barrel_ring2d(stack: RasterStack, e: Electrode,
                    mask2d: np.ndarray) -> np.ndarray:
     """Contact cells of a barrel electrode on one layer: the copper ring
-    at the drill wall (cell centers within one cell of radius drill/2),
+    at the drill wall (cell centers within one cell of radius drill/2;
+    slotted holes: within one cell of the stadium-shaped slot wall),
     where the lead/wire soldered into the hole actually meets the layer.
     If rasterization or an antipad leaves no copper there, fall back to
     the nearest copper ring within the pad footprint (+1 cell of slop) -
@@ -491,16 +496,17 @@ def _barrel_ring2d(stack: RasterStack, e: Electrode,
         y = (e.rect.y0 + e.rect.y1) / 2.0
     r = e.drill_nm / 2.0
     rw = max(e.pad_nm, e.drill_nm + 300_000) / 2.0 + h
+    ex, ey = rw + abs(e.slot_dx_nm), rw + abs(e.slot_dy_nm)
     out = np.zeros((ny, nx), dtype=bool)
-    j0 = max(0, math.floor((x - rw - stack.x0_nm) / h))
-    j1 = min(nx, math.floor((x + rw - stack.x0_nm) / h) + 1)
-    i0 = max(0, math.floor((y - rw - stack.y0_nm) / h))
-    i1 = min(ny, math.floor((y + rw - stack.y0_nm) / h) + 1)
+    j0 = max(0, math.floor((x - ex - stack.x0_nm) / h))
+    j1 = min(nx, math.floor((x + ex - stack.x0_nm) / h) + 1)
+    i0 = max(0, math.floor((y - ey - stack.y0_nm) / h))
+    i1 = min(ny, math.floor((y + ey - stack.y0_nm) / h) + 1)
     if i0 >= i1 or j0 >= j1:
         return out
     xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - x
     ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - y
-    d = np.sqrt(ys[:, None] ** 2 + xs[None, :] ** 2)
+    d = slot_distance(xs[None, :], ys[:, None], e.slot_dx_nm, e.slot_dy_nm)
     m = mask2d[i0:i1, j0:j1]
     ring = m & (np.abs(d - r) <= h)
     if not ring.any():

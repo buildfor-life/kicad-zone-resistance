@@ -113,11 +113,16 @@ class Electrode:
     contact: str = "all"
     polygons: list[Polygon] | None = None
     label: str = "rect"
-    drill_nm: int = 0                         # >0: barrel contact
+    drill_nm: int = 0                         # >0: barrel contact (slotted
+                                              # holes: the slot WIDTH)
     pad_nm: int = 0                           # pad diameter (search bound;
                                               # largest dimension if oblong)
     pad_min_nm: int = 0                       # smallest pad dimension (cone
                                               # taper bound); 0 = pad_nm
+    slot_dx_nm: int = 0                       # slotted (oblong) hole: offset
+    slot_dy_nm: int = 0                       # from `center` to each end-cap
+                                              # center of the slot, board
+                                              # frame; (0, 0) = round drill
     center: tuple[int, int] | None = None     # drill center; None = rect center
     barrel_z: tuple[int, int] | None = None   # (z_top, z_bot); None = full stack
     solder: bool = False                      # soldered THT joint (see above)
@@ -134,7 +139,7 @@ class ViaLink:
     layers whose z lies within [z_top_nm, z_bot_nm]."""
     x: int
     y: int
-    drill_nm: int
+    drill_nm: int                             # slotted holes: the slot WIDTH
     z_top_nm: int
     z_bot_nm: int
     kind: str = "via"                         # "via" | "pad"
@@ -144,6 +149,10 @@ class ViaLink:
     pad_min_nm: int = 0                       # smallest pad dimension (bounds
                                               # the lead-cone taper on oblong
                                               # pads); 0 = same as pad_nm
+    slot_dx_nm: int = 0                       # slotted (oblong) hole: offset
+    slot_dy_nm: int = 0                       # from (x, y) to each end-cap
+                                              # center of the slot, board
+                                              # frame; (0, 0) = round drill
     solder_filled: bool = False               # populated THT pad: the hole
                                               # holds lead + solder (in parallel
                                               # with the plating); False for
@@ -162,19 +171,22 @@ class ViaLink:
                           lead_nm: float = 0,
                           lead_rho_ohm_m: float | None = None) -> float:
         """Barrel segment resistance over length_nm: thin-wall annulus of
-        plating around the drill. With solder_rho_ohm_m the hole holds a
+        plating around the drill (slotted holes: thin wall around the
+        stadium-shaped slot). With solder_rho_ohm_m the hole holds a
         soldered THT joint: the component lead (a cylinder of lead_nm
         diameter, resistivity lead_rho_ohm_m) and the solder filling the
-        remaining annulus conduct in parallel with the plating."""
-        ga = math.pi * (self.drill_nm * 1e-9) * (plating_nm * 1e-9) \
-            / rho_ohm_m                       # conductance-area [m^2/ohm-m]
+        remaining bore conduct in parallel with the plating."""
+        ext = 2.0 * math.hypot(self.slot_dx_nm, self.slot_dy_nm) * 1e-9
+        wall = math.pi * (self.drill_nm * 1e-9) + 2.0 * ext
+        ga = wall * (plating_nm * 1e-9) / rho_ohm_m
+                                              # conductance-area [m^2/ohm-m]
         if solder_rho_ohm_m is not None:
             r_core = max(self.drill_nm / 2.0 - plating_nm, 0.0) * 1e-9
             r_lead = min(lead_nm * 1e-9 / 2.0, r_core)
             if lead_rho_ohm_m is not None and r_lead > 0:
                 ga += math.pi * r_lead * r_lead / lead_rho_ohm_m
-            ga += math.pi * (r_core * r_core - r_lead * r_lead) \
-                / solder_rho_ohm_m
+            ga += (math.pi * r_core * r_core + 2.0 * r_core * ext
+                   - math.pi * r_lead * r_lead) / solder_rho_ohm_m
         return (length_nm * 1e-9) / ga
 
 
@@ -261,12 +273,38 @@ def contact_solder_buildups(problem: Problem) -> list[str]:
     return sorted(set(touched))
 
 
+def slot_distance(xg, yg, dx_nm: int, dy_nm: int):
+    """Distance from points (xg, yg) (numpy-broadcastable, coordinates
+    RELATIVE to the hole center) to a slotted hole's axis - the segment
+    (-dx, -dy)..(+dx, +dy) between the end-cap centers. The slot wall
+    sits at distance width/2. Round drills (dx = dy = 0) reduce to the
+    plain radius, so callers need no special case."""
+    if dx_nm == 0 and dy_nm == 0:
+        return np.hypot(xg, yg)
+    l2 = float(dx_nm) * dx_nm + float(dy_nm) * dy_nm
+    t = np.clip((xg * dx_nm + yg * dy_nm) / l2, -1.0, 1.0)
+    return np.hypot(xg - t * dx_nm, yg - t * dy_nm)
+
+
 def _disc_polygon(x_nm: float, y_nm: float, r_nm: float,
                   n: int = 32) -> Polygon:
     th = np.linspace(0.0, 2.0 * math.pi, n, endpoint=False)
     return Polygon(outline=np.round(np.stack(
         [x_nm + r_nm * np.cos(th), y_nm + r_nm * np.sin(th)],
         axis=1)).astype(np.int64))
+
+
+def _capsule_polygon(x_nm: float, y_nm: float, dx_nm: float, dy_nm: float,
+                     r_nm: float, n: int = 16) -> Polygon:
+    """Stadium: two half-circle caps of radius r_nm centered at
+    (x +- dx, y +- dy), joined by straight flanks."""
+    a0 = math.atan2(dy_nm, dx_nm)
+    th = np.linspace(-0.5 * math.pi, 0.5 * math.pi, n) + a0
+    cap1 = np.stack([x_nm + dx_nm + r_nm * np.cos(th),
+                     y_nm + dy_nm + r_nm * np.sin(th)], axis=1)
+    cap2 = np.stack([x_nm - dx_nm + r_nm * np.cos(th + math.pi),
+                     y_nm - dy_nm + r_nm * np.sin(th + math.pi)], axis=1)
+    return Polygon(outline=np.round(np.vstack([cap1, cap2])).astype(np.int64))
 
 
 def tht_joint_buildups(problem: Problem,
@@ -292,7 +330,16 @@ def tht_joint_buildups(problem: Problem,
         if polys is None:
             if v.pad_nm <= v.drill_nm:
                 continue
-            polys = [_disc_polygon(v.x, v.y, v.pad_nm / 2.0)]
+            # oblong pads: never coat past the pad - a capsule along the
+            # slot axis, or the inscribed disc when the axis is unknown
+            w = v.pad_min_nm or v.pad_nm
+            hl = math.hypot(v.slot_dx_nm, v.slot_dy_nm)
+            if hl > 0.0 and v.pad_nm > w:
+                s = (v.pad_nm - w) / 2.0 / hl
+                polys = [_capsule_polygon(v.x, v.y, v.slot_dx_nm * s,
+                                          v.slot_dy_nm * s, w / 2.0)]
+            else:
+                polys = [_disc_polygon(v.x, v.y, w / 2.0)]
         problem.buildups.append(
             SurfaceBuildup(layer_name=v.protrusion_side,
                            polygons=list(polys)))
@@ -451,6 +498,8 @@ def _electrode_to_json(e: Electrode) -> dict:
         "drill_nm": e.drill_nm,
         "pad_nm": e.pad_nm,
         "pad_min_nm": e.pad_min_nm,
+        "slot_dx_nm": e.slot_dx_nm,
+        "slot_dy_nm": e.slot_dy_nm,
         "center": (None if e.center is None else list(e.center)),
         "barrel_z": (None if e.barrel_z is None else list(e.barrel_z)),
         "solder": e.solder,
@@ -468,6 +517,8 @@ def _electrode_from_json(d: dict) -> Electrode:
         drill_nm=int(d.get("drill_nm", 0)),
         pad_nm=int(d.get("pad_nm", 0)),
         pad_min_nm=int(d.get("pad_min_nm", 0)),
+        slot_dx_nm=int(d.get("slot_dx_nm", 0)),
+        slot_dy_nm=int(d.get("slot_dy_nm", 0)),
         center=(None if d.get("center") is None
                 else (int(d["center"][0]), int(d["center"][1]))),
         barrel_z=(None if d.get("barrel_z") is None
@@ -564,6 +615,8 @@ def problem_from_json(d: dict) -> Problem:
                     kind=vd.get("kind", "via"),
                     pad_nm=int(vd.get("pad_nm", 0)),
                     pad_min_nm=int(vd.get("pad_min_nm", 0)),
+                    slot_dx_nm=int(vd.get("slot_dx_nm", 0)),
+                    slot_dy_nm=int(vd.get("slot_dy_nm", 0)),
                     # older dumps: every THT pad counted as solder-filled
                     solder_filled=bool(vd.get(
                         "solder_filled", vd.get("kind", "via") == "pad")),

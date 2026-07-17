@@ -6,6 +6,7 @@ KiCad to extract without the dialog (all layers of the net, defaults).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -139,11 +140,33 @@ def _convert_poly(poly_with_holes) -> Polygon:
                    holes=[ring(h) for h in poly_with_holes.holes])
 
 
-def _pad_drill_nm(pad_or_via) -> int:
+def _drill_info(pad_or_via) -> tuple[int, int, int]:
+    """(width_nm, slot_dx_nm, slot_dy_nm) of a padstack drill. Round
+    holes: (diameter, 0, 0). Slotted (oblong) holes: width is the
+    NARROW dimension, (slot_dx, slot_dy) the board-frame offset from
+    the drill center to each end-cap center of the slot. The slot
+    follows the pad rotation (KiCad rotates CCW with y down:
+    x' = x cos + y sin, y' = y cos - x sin)."""
     try:
-        return int(pad_or_via.padstack.drill.diameter.x)
+        d = pad_or_via.padstack.drill.diameter
+        dx, dy = int(d.x), int(d.y)
     except Exception:
-        return 0
+        return 0, 0, 0
+    if dx <= 0 or dy <= 0 or dx == dy:
+        return max(dx, 0), 0, 0
+    half = (max(dx, dy) - min(dx, dy)) / 2.0
+    try:
+        th = math.radians(pad_or_via.padstack.angle.degrees)
+    except Exception:
+        th = 0.0
+    ux, uy = (1.0, 0.0) if dx > dy else (0.0, 1.0)
+    return (min(dx, dy),
+            int(round(half * (ux * math.cos(th) + uy * math.sin(th)))),
+            int(round(half * (uy * math.cos(th) - ux * math.sin(th)))))
+
+
+def _pad_drill_nm(pad_or_via) -> int:
+    return _drill_info(pad_or_via)[0]
 
 
 def _pad_default_contact(pad: Pad) -> str:
@@ -250,7 +273,7 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
     if box is None:
         raise SelectionError(f"Could not get the bounding box of {label}.")
     rect = _box2_to_rect(box, "pad")
-    drill = _pad_drill_nm(pad)
+    drill, slot_dx, slot_dy = _drill_info(pad)
     return Electrode(rect=rect, contact=contact,
                      polygons=_pad_polygons(board, pad, contact), label=label,
                      # through-hole pad: current enters at the soldered
@@ -258,6 +281,7 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
                      # with a solder cone around the protruding lead
                      drill_nm=drill, pad_nm=_padstack_pad_nm(pad),
                      pad_min_nm=_padstack_pad_min_nm(pad),
+                     slot_dx_nm=slot_dx, slot_dy_nm=slot_dy,
                      center=(pad.position.x, pad.position.y),
                      solder=drill > 0,
                      protrusion_side=(_tht_protrusion_side(pad, pad_map or {})
@@ -547,12 +571,14 @@ def gather_barrels(board: Board, net_name: str,
                     populated = not fp.attributes.do_not_populate
                 except Exception:
                     pass
+            drill, slot_dx, slot_dy = _drill_info(pad)
             barrels.append(ViaLink(
                 x=pad.position.x, y=pad.position.y,
-                drill_nm=_pad_drill_nm(pad), z_top_nm=-1,
+                drill_nm=drill, z_top_nm=-1,
                 z_bot_nm=stackup.z_bot_nm + 1, kind="pad",
                 pad_nm=_padstack_pad_nm(pad),
                 pad_min_nm=_padstack_pad_min_nm(pad),
+                slot_dx_nm=slot_dx, slot_dy_nm=slot_dy,
                 solder_filled=populated,
                 protrusion_side=(_tht_protrusion_side(pad, pad_map,
                                                       quiet=True)

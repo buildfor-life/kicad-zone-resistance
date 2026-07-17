@@ -47,7 +47,7 @@ from scipy.sparse import linalg as sla
 
 from . import config, skin
 from .errors import ConnectivityError, ElectrodeError, SolverError
-from .geometry import Problem
+from .geometry import Problem, slot_distance
 from .raster import RasterStack, electrodes_touch
 
 
@@ -156,12 +156,14 @@ def _barrel_links(stack: RasterStack, problem: Problem
         span = [li for li, layer in enumerate(problem.layers)
                 if via.spans(layer.z_nm)]
         r_nm = max(via.pad_nm, via.drill_nm + 300_000) / 2.0 + h
-        win = int(r_nm // h) + 1
-        i0, i1 = max(0, i - win), min(ny, i + win + 1)
-        j0, j1 = max(0, j - win), min(nx, j + win + 1)
+        win_j = int((r_nm + abs(via.slot_dx_nm)) // h) + 1
+        win_i = int((r_nm + abs(via.slot_dy_nm)) // h) + 1
+        i0, i1 = max(0, i - win_i), min(ny, i + win_i + 1)
+        j0, j1 = max(0, j - win_j), min(nx, j + win_j + 1)
         xs = stack.x0_nm + (np.arange(j0, j1) + 0.5) * h - via.x
         ys = stack.y0_nm + (np.arange(i0, i1) + 0.5) * h - via.y
-        d2 = ys[:, None] ** 2 + xs[None, :] ** 2
+        d2 = slot_distance(xs[None, :], ys[:, None],
+                           via.slot_dx_nm, via.slot_dy_nm) ** 2
         d2 = np.where(d2 <= r_nm * r_nm, d2, np.inf)
         present = []                            # (layer, i, j) per layer
         for li in span:

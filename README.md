@@ -112,7 +112,11 @@ SWIG API. Requires KiCad **10.0.1+**.
   worth far more than the foil, so this is conservative. The pad face
   gets the average-thickness solder coat (exact pad shape) and the
   protruding-lead cone (see barrel contacts below; on oblong pads the
-  cone tapers within the inscribed circle). Whether a hole is a via or
+  cone tapers to the pad's short dimension). **Slotted (oval) holes**
+  keep their true stadium shape: the barrel wall, drill mouth, contact
+  ring and lead cone all follow the slot (rotated with the pad), and
+  the barrel conducts over the slot's real perimeter/bore area — not a
+  circle of the slot's long dimension. Whether a hole is a via or
   a THT pad, the owning footprint's side, and its **Do not populate**
   flag are all read from KiCad. **DNP pads** get an **open hole** and
   a plating-only barrel, no joint. At f > 0 the thickness scaling is
@@ -159,7 +163,8 @@ SWIG API. Requires KiCad **10.0.1+**.
   physically enters through the lead/wire soldered into the hole, so
   the spreading resistance across the pad and surrounding pour is part
   of the result (both contact models; verified against
-  R = ρ/(π·t)·acosh(d/2a) for two circular contacts on a sheet). A
+  R = ρ/(π·t)·acosh(d/2a) for two circular contacts on a sheet).
+  Slotted holes inject along the stadium-shaped slot wall. A
   soldered **THT joint** additionally assumes the **hole is filled with
   solder** (core in parallel with the plating) and the **pad face on
   the solder side carries an average-thickness solder coat**

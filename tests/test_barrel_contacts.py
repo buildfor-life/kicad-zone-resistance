@@ -318,6 +318,162 @@ def test_vialink_solder_json():
     assert problem_from_json(d).vias[0].solder_filled is False
 
 
+# --- slotted (oblong) holes --------------------------------------------------
+# The lead/barrel of a slotted hole is a stadium, not a circle: modeling
+# it as a circle of the slot's LONG dimension painted contact rings,
+# mouths and cones bigger than the oblong pad itself.
+
+def _slot_dist_mm(stack, ii, jj, x_mm, y_mm, dx_nm):
+    """Distance of cells (ii, jj) to a slot axis (+-dx_nm along x)."""
+    xs = stack.x0_nm + (jj + 0.5) * stack.h_nm - x_mm * NM
+    ys = stack.y0_nm + (ii + 0.5) * stack.h_nm - y_mm * NM
+    t = np.clip(xs / dx_nm, -1.0, 1.0)
+    return np.hypot(xs - t * dx_nm, ys), xs, ys
+
+
+def test_slot_ring_hugs_slot_wall():
+    """The contact ring of a slotted THT pad follows the stadium-shaped
+    slot wall: it reaches around the end caps but never pokes past the
+    oblong pad's short side (the old circular model of the slot's long
+    dimension put cells at radius 1.5 mm straight above/below)."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    e = _barrel(10, 10, drill_mm=1.0, pad_mm=3.6)   # slot 3.0 x 1.0 mm
+    e.pad_min_nm = int(1.6 * NM)                    # pad 3.6 x 1.6 mm
+    e.slot_dx_nm = 1 * NM
+    p.electrodes1 = [e]
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    e1, _ = raster.electrode_masks(stack, p)
+    ii, jj = np.nonzero(e1[0])
+    d, xs, ys = _slot_dist_mm(stack, ii, jj, 10, 10, 1 * NM)
+    assert len(ii) >= 16
+    assert (np.abs(d - 0.5 * NM) <= stack.h_nm + 1).all()
+    assert xs.max() > 1.2 * NM and xs.min() < -1.2 * NM   # rings the caps
+    assert np.abs(ys).max() < 0.8 * NM      # stays inside the 1.6 mm side
+
+
+def test_slot_mouth_is_stadium():
+    """A DNP slotted pad cuts a stadium-shaped hole: open along the whole
+    slot, copper kept just past the slot width and the end caps."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    v = _pad_link(populated=False)
+    v.slot_dx_nm = 1 * NM                   # slot 3.0 x 1.0 mm along x
+    p.vias = [v]
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    m = stack.masks[0]
+    assert not m[stack.cell_of(10 * NM, 10 * NM)]
+    assert not m[stack.cell_of(int(10.9 * NM), 10 * NM)]  # slot end: open
+    assert not m[stack.cell_of(int(9.1 * NM), 10 * NM)]
+    assert m[stack.cell_of(10 * NM, int(10.8 * NM))]  # past the width: copper
+    assert m[stack.cell_of(10 * NM, int(9.2 * NM))]
+    assert m[stack.cell_of(int(11.8 * NM), 10 * NM)]  # past the cap: copper
+
+
+def test_slot_cone_follows_slot():
+    """The lead cone of a slotted oblong pad tapers from the slot WALL
+    to the pad's short dimension. The old circular-drill model (diameter
+    = the slot's long dimension) skipped the cone entirely
+    (pad_min <= drill) and, for the mouth, ate the pad's short side."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    e = _barrel(10, 10, drill_mm=1.0, pad_mm=3.6, solder=True)
+    e.pad_min_nm = int(1.6 * NM)
+    e.slot_dx_nm = 1 * NM
+    e.protrusion_side = "F.Cu"
+    p.electrodes1 = [e]
+    stack = raster.rasterize_stack(p, 0.1 * NM)
+    assert stack.thick_scale is not None
+    ny, nx = stack.shape2d
+    jj, ii = np.meshgrid(np.arange(nx), np.arange(ny))
+    r, _, _ = _slot_dist_mm(stack, ii, jj, 10, 10, 1 * NM)
+    ra, rb, H = 0.5 * NM, 0.8 * NM, p.tht_protrusion_nm
+    t_eq = H * np.clip((rb - r) / (rb - ra), 0, 1) \
+        * (p.rho_ohm_m / p.solder_rho_ohm_m)
+    expect = np.where(stack.masks[0],
+                      1.0 + t_eq / p.layers[0].thickness_nm, 1.0)
+    assert np.allclose(stack.thick_scale[0], expect, rtol=1e-12)
+    assert stack.thick_scale[0].max() > 3.0
+
+
+def test_slot_barrel_resistance():
+    """Slotted barrel: plating wall = stadium perimeter, solder core =
+    stadium bore area (both reduce to the circle for dx = dy = 0)."""
+    v = ViaLink(x=0, y=0, drill_nm=1_000_000, z_top_nm=-1, z_bot_nm=1,
+                slot_dx_nm=800_000, slot_dy_nm=600_000)   # ext = 2 mm
+    rho, sn = 1.68e-8, 1.32e-7
+    ga = (math.pi * 1e-3 + 2 * 2e-3) * 18e-6 / rho
+    r_plain = v.barrel_resistance(1_600_000, rho, 18_000)
+    assert r_plain == pytest.approx(1.6e-3 / ga, rel=1e-12)
+    rc = 0.5e-3 - 18e-6
+    ga += (math.pi * rc * rc + 2 * rc * 2e-3) / sn
+    r_fill = v.barrel_resistance(1_600_000, rho, 18_000, solder_rho_ohm_m=sn)
+    assert r_fill == pytest.approx(1.6e-3 / ga, rel=1e-12)
+
+
+def test_slot_coat_fallback_within_pad():
+    """Without an exact pad shape the stitching coat falls back to a
+    capsule along the slot (width = pad_min), not the old pad_nm disc
+    that stuck out past an oblong pad's short side."""
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    v = _pad_link()                          # pad_nm = 2.4 mm
+    v.pad_min_nm = 1_600_000
+    v.slot_dx_nm = 1 * NM
+    p.vias = [v]
+    assert tht_joint_buildups(p) == ["F.Cu"]
+    pts = p.buildups[0].polygons[0].outline.astype(float)
+    xs, ys = pts[:, 0] - 10 * NM, pts[:, 1] - 10 * NM
+    t = np.clip(xs / (0.4 * NM), -1.0, 1.0)  # caps at +-(2.4-1.6)/2 mm
+    d = np.hypot(xs - t * 0.4 * NM, ys)
+    assert np.allclose(d, 0.8 * NM, atol=2)
+    assert np.abs(xs).max() <= 1.2 * NM + 2  # never past pad_nm / 2
+    assert np.abs(ys).max() <= 0.8 * NM + 2  # never past pad_min / 2
+
+
+def test_slot_json_roundtrip():
+    p = make_problem([(PLATE20, [])],
+                     rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
+    e = _barrel(10, 10, drill_mm=1.0, pad_mm=3.6)
+    e.slot_dx_nm, e.slot_dy_nm = 700_000, -700_000
+    p.electrodes1 = [e]
+    v = _pad_link()
+    v.slot_dx_nm = 1 * NM
+    p.vias = [v]
+    q = problem_from_json(problem_to_json(p))
+    assert (q.electrodes1[0].slot_dx_nm, q.electrodes1[0].slot_dy_nm) \
+        == (700_000, -700_000)
+    assert (q.vias[0].slot_dx_nm, q.vias[0].slot_dy_nm) == (1 * NM, 0)
+    # legacy dumps: round drills
+    d = problem_to_json(p)
+    for vd in d["vias"]:
+        del vd["slot_dx_nm"], vd["slot_dy_nm"]
+    assert problem_from_json(d).vias[0].slot_dx_nm == 0
+
+
+def test_drill_info_slot_rotation():
+    """_drill_info: slot axis from the drill x/y sizes, rotated with the
+    pad (KiCad angles are CCW with y down: 90 deg sends +x to -y)."""
+    from types import SimpleNamespace as NS
+
+    from fill_resistance.board_io import _drill_info
+
+    def pad(dx_mm, dy_mm, angle_deg):
+        return NS(padstack=NS(
+            drill=NS(diameter=NS(x=int(dx_mm * NM), y=int(dy_mm * NM))),
+            angle=NS(degrees=angle_deg)))
+
+    assert _drill_info(pad(1.0, 1.0, 0.0)) == (1 * NM, 0, 0)    # round
+    assert _drill_info(pad(3.0, 1.0, 0.0)) == (1 * NM, 1 * NM, 0)
+    assert _drill_info(pad(1.0, 3.0, 0.0)) == (1 * NM, 0, 1 * NM)
+    w, dx, dy = _drill_info(pad(3.0, 1.0, 90.0))
+    assert (w, dx, dy) == (1 * NM, 0, -1 * NM)
+    w, dx, dy = _drill_info(pad(3.0, 1.0, 45.0))
+    assert w == 1 * NM
+    assert dx == pytest.approx(1 * NM / math.sqrt(2), abs=2)
+    assert dy == pytest.approx(-1 * NM / math.sqrt(2), abs=2)
+
+
 def test_barrel_electrode_json_roundtrip(tmp_path):
     p = make_problem([(PLATE20, [])],
                      rect1_mm=(0, 0, 1, 20), rect2_mm=(19, 0, 20, 20))
