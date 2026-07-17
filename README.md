@@ -16,7 +16,10 @@ current**. PNGs + a text summary are saved per run.
 THT-pad contact (V+, injected at the drill-wall ring) squeezes past a
 notch in the F.Cu pour, transfers through the stitching-via field into
 the B.Cu pour and leaves at the V− lug — per-via currents and the
-hottest via are reported.*
+hottest via are reported. The white equipotential lines share their
+levels across the layers, so their density reads as field strength:
+nearly the whole drop happens around the notch on F.Cu, only two lines
+fall across the B.Cu pour.*
 
 Uses the KiCad **IPC API** (`kicad-python` / `kipy`), not the deprecated
 SWIG API. Requires KiCad **10.0.1+**.
