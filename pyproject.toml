@@ -3,7 +3,7 @@
 # the dependency list there in sync with [project.dependencies].
 [project]
 name = "fill-resistance"
-version = "1.2.1"
+version = "1.2.2"
 description = "DC resistance of copper zone fills and traces between two contacts (KiCad 10 plugin)"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
