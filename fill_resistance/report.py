@@ -59,7 +59,8 @@ def write_summary(outdir: Path, problem: Problem, stack: RasterStack,
          + (f"{result.freq_hz:g} Hz (skin depth {result.skin_depth_um:.0f} um)"
             if result.freq_hz > 0 else "DC")),
         f"RESISTANCE:        {result.R_ohm * 1000:.6g} mOhm"
-        + (" (AC LOWER BOUND: lateral/proximity redistribution not modeled)"
+        + (" (SKIN-ONLY LOWER BOUND: no proximity/inductance - "
+           "not AC impedance)"
            if result.freq_hz > 0 else ""),
         f"VOLTAGE DROP:      {result.R_ohm * result.i_test * 1000:.4g} mV "
         f"@ {result.i_test:g} A",

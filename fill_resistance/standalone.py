@@ -26,7 +26,8 @@ def main(argv=None) -> int:
                     help="test current [A] (default: config TEST_CURRENT_A)")
     ap.add_argument("--freq", type=parse_frequency, default=0.0,
                     help="frequency, e.g. 142k or 1.5M (default: DC). "
-                         "AC results are a lower bound (skin per foil only)")
+                         "Skin resistance only, a lower bound - not AC "
+                         "impedance (no proximity, no inductance)")
     ap.add_argument("--cell-um", type=float, default=None,
                     help="force grid cell size [um]")
     ap.add_argument("--layers", type=str, default=None,
