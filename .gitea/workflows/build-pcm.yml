@@ -14,7 +14,10 @@ jobs:
       # repointed at malicious code that runs with repo/token access
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0        # the annotated tag carries the release notes
+          # the annotated tag carries the release notes, and checkout
+          # fetches with --no-tags unless asked - at any fetch-depth
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Check tag matches metadata.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -44,6 +47,11 @@ jobs:
         run: |
           git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" \
             > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no annotated message on $GITHUB_REF_NAME - refusing to" \
+                 "publish a release with empty notes" >&2
+            exit 1
+          fi
           cat release-notes.md
 
       - name: Create release with the zip, registry metadata and figures
