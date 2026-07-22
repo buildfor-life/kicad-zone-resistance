@@ -58,8 +58,14 @@ SWIG API. Requires KiCad **10.0.1+**.
      `ELECTRODE_NEG_LAYER`), any number per side, axis-aligned;
    - **pads and vias** (SMD pad: real copper shape on its own layer;
      through-hole pads and vias become **barrel contacts**: the current
-     enters at the drill wall on every spanned layer, see below);
-     selected pads/vias fill a side that has no rectangles;
+     enters at the drill wall on every spanned layer, see below).
+     Selected pads/vias fill the side that has **no rectangles**, so
+     mixing both kinds is the everyday workflow: e.g. select **one
+     rectangle on `User.1`** (V+) **plus any number of pads / THT
+     holes** (Ctrl-click) — the pads together form the V− terminal
+     (a connector's pin group, a via cluster, …). All selected
+     pads/vias go to that one side; if both marker layers already
+     provide rectangles, selecting pads on top is an error;
    - legacy: exactly 2 selected contacts with no marker rectangles still
      works; empty selection scans the whole board's marker layers.
 2. **Select the contacts**, click the **Fill Resistance** Ω button.
@@ -68,7 +74,11 @@ SWIG API. Requires KiCad **10.0.1+**.
    ("All selected layers" = bolted-lug/through contact), the **test
    current**, and optionally a grid cell size. Multiple layers are coupled
    through the net's via/pad barrels automatically.
-4. Read R / voltage drop / total power in the figure titles and status
+4. Wait for the solve. Depending on board size, included layers, cell
+   size and your hardware it can take **considerable time** — large
+   multi-layer pours at fine cell sizes may run for minutes (on our
+   test setup a typical real-board run finishes in ≈ 8 s). Then read
+   R / voltage drop / total power in the figure titles and status
    bar. Outputs land in `<board dir>\fill_res_results\<timestamp>\`:
    per-layer `1_raster_map` / `2_potential` / `3_current_density` /
    `4_power_density` PNGs, `summary.txt` (incl. the busiest vias with
