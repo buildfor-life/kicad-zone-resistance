@@ -4,7 +4,7 @@ The PCM addon zip is built by CI (`.gitea/workflows/build-pcm.yml`).
 Every push to `main` builds it as a downloadable artifact; pushing a
 `v<version>` tag additionally creates a Gitea release with the zip
 attached. The release job checks that the tag matches `metadata.json`
-and fails on a mismatch.
+and that the release notes exist, and fails on either mismatch.
 
 ## Steps
 
@@ -23,17 +23,25 @@ and fails on a mismatch.
    ]
    ```
 
-2. **Commit, tag, push** (tag = `v` + the manifest version):
+2. **Write the release notes** at `docs/release-notes/v<version>.md`.
+   This file becomes the release description verbatim; the job fails if
+   it is missing or empty (the release action publishes empty notes
+   rather than falling back to the tag message, which is how v1.2.0
+   shipped with a blank description). Say what changed for a user of
+   the previous version — in particular, whether results move for an
+   unchanged board.
+
+3. **Commit, tag, push** (tag = `v` + the manifest version):
 
    ```powershell
-   git add metadata.json
+   git add metadata.json docs/release-notes/v1.0.2.md
    git commit -m "Release 1.0.2"
    git tag v1.0.2
    git push
    git push origin v1.0.2
    ```
 
-3. **Verify**: the Actions run for the tag builds
+4. **Verify**: the Actions run for the tag builds
    `th.co.b4l.fill-resistance_<version>.zip` and publishes it at
    <https://git.b4l.co.th/B4L/kicad-zone-resistance/releases>, together
    with `metadata-registry.json`. The zip installs directly via

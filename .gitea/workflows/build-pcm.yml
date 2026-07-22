@@ -13,11 +13,6 @@ jobs:
       # third-party actions pinned to commit SHAs: mutable tags could be
       # repointed at malicious code that runs with repo/token access
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          # the annotated tag carries the release notes, and checkout
-          # fetches with --no-tags unless asked - at any fetch-depth
-          fetch-depth: 0
-          fetch-tags: true
 
       - name: Check tag matches metadata.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -40,25 +35,26 @@ jobs:
             dist/*.zip
             dist/metadata-registry.json
 
-      # the action does not fall back to the tag annotation, so an
-      # un-bodied release publishes with empty notes (as v1.2.0 did)
-      - name: Release notes from the annotated tag
+      # The release body comes from a file in the repo: the action does
+      # not fall back to the tag annotation (v1.2.0 published empty), and
+      # reading the annotation here is unreliable - checkout leaves the
+      # tag lightweight, so %(contents) yields the commit message instead.
+      - name: Check the release notes exist
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" \
-            > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "no annotated message on $GITHUB_REF_NAME - refusing to" \
-                 "publish a release with empty notes" >&2
+          notes="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -s "$notes" ]; then
+            echo "$notes is missing or empty - write the release notes" \
+                 "before tagging" >&2
             exit 1
           fi
-          cat release-notes.md
+          cat "$notes"
 
       - name: Create release with the zip, registry metadata and figures
         if: startsWith(github.ref, 'refs/tags/v')
         uses: akkuman/gitea-release-action@b8d9144f302c68610911db1aaf722708d5c02d94 # v1
         with:
-          body_path: release-notes.md
+          body_path: docs/release-notes/${{ github.ref_name }}.md
           files: |
             dist/*.zip
             dist/metadata-registry.json
