@@ -18,9 +18,21 @@ from .errors import CandidateError, UserFacingError
 
 def _fail(message: str, outdir) -> None:
     print(f"ERROR: {message}")
-    from . import plots
-    fig = plots.fig_error(message)
-    plots.save_and_show([(fig, "error")], outdir)
+    try:
+        if outdir is None:
+            # A failure before the run has an output directory (a broken
+            # plugin environment throws on import) would otherwise save
+            # no PNG - and with no GUI toolkit, plots falls back to
+            # opening the saved PNGs, so the figure would never be shown
+            # either. Exactly the case the docstring promises to cover.
+            import tempfile
+            from pathlib import Path
+            outdir = Path(tempfile.gettempdir()) / "fill-resistance-error"
+        from . import plots
+        fig = plots.fig_error(message)
+        plots.save_and_show([(fig, "error")], outdir)
+    except Exception:                     # reporting must not mask the fault
+        traceback.print_exc()
     sys.exit(1)
 
 

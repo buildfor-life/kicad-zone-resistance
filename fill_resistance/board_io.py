@@ -182,11 +182,18 @@ def _pad_default_contact(pad: Pad) -> str:
     return "all"
 
 
-def _pad_polygons(board: Board, pad: Pad, contact: str) -> list[Polygon] | None:
+def _pad_polygons(board: Board, pad: Pad, contact: str,
+                  prefer: str | None = None) -> list[Polygon] | None:
+    """Exact pad copper. The first probed layer that has a shape wins, so
+    `prefer` (the solder side of a THT joint) must be tried before the
+    F.Cu/B.Cu fallback: KiCad allows a different pad size per copper
+    layer, and the solder coat is sized from this shape."""
     layer_ids = []
-    if contact != "all":
+    for name in (contact if contact != "all" else None, prefer):
+        if not name:
+            continue
         try:
-            layer_ids.append(layer_from_canonical_name(contact))
+            layer_ids.append(layer_from_canonical_name(name))
         except Exception:
             pass
     for name in ("F.Cu", "B.Cu"):
@@ -274,8 +281,10 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
         raise SelectionError(f"Could not get the bounding box of {label}.")
     rect = _box2_to_rect(box, "pad")
     drill, slot_dx, slot_dy = _drill_info(pad)
+    prot = _tht_protrusion_side(pad, pad_map or {}) if drill > 0 else None
     return Electrode(rect=rect, contact=contact,
-                     polygons=_pad_polygons(board, pad, contact), label=label,
+                     polygons=_pad_polygons(board, pad, contact, prefer=prot),
+                     label=label,
                      # through-hole pad: current enters at the soldered
                      # barrel; the joint is solder-filled + pad-coated,
                      # with a solder cone around the protruding lead
@@ -283,9 +292,7 @@ def _to_electrode(board: Board, item, stackup: StackupInfo | None = None,
                      pad_min_nm=_padstack_pad_min_nm(pad),
                      slot_dx_nm=slot_dx, slot_dy_nm=slot_dy,
                      center=(pad.position.x, pad.position.y),
-                     solder=drill > 0,
-                     protrusion_side=(_tht_protrusion_side(pad, pad_map or {})
-                                      if drill > 0 else None))
+                     solder=drill > 0, protrusion_side=prot)
 
 
 def _net_hint_of(items: list) -> str | None:
@@ -605,6 +612,10 @@ def gather_smd_pad_copper(board: Board, net_name: str
             continue
         layer = _pad_default_contact(pad)      # SMD: its own copper layer
         if layer == "all":
+            # zero or >1 copper layers (custom padstack): no single layer
+            # to stamp it on. Say so - a silent skip loses a real junction
+            print(f"note: pad {pad.number}@{net_name} sits on no single "
+                  f"copper layer - its pad copper is not modelled")
             continue
         polys = _pad_polygons(board, pad, layer)
         if polys:
@@ -657,20 +668,48 @@ def _create_reference_image(board: Board, ref) -> None:
 
 
 def remove_overlays(board: Board, layer) -> int:
-    """Remove every reference image on the given layer; returns count."""
+    """Remove every reference image on the given layer; returns count.
+
+    remove_items with the per-item status surfaced: kipy discards the
+    DeleteItemsResponse, and its own proto warns the overall status "may
+    return IRS_OK even if no items were deleted" - a locked image comes
+    back IDS_IMMUTABLE. Unchecked, the stale image survives and the new
+    one is stacked on top of it instead of replacing it."""
+    from kipy.proto.common.commands.editor_commands_pb2 import (
+        DeleteItems, DeleteItemsResponse, ItemDeletionStatus)
+
     ours = [r for r in board.get_reference_images() if r.layer == layer]
-    if ours:
-        board.remove_items(ours)
-    return len(ours)
+    if not ours:
+        return 0
+
+    cmd = DeleteItems()
+    cmd.header.document.CopyFrom(board._doc)
+    cmd.item_ids.extend([r.id for r in ours])
+    results = board._kicad.send(cmd, DeleteItemsResponse).deleted_items
+
+    stuck = [r for r in results
+             if r.status not in (ItemDeletionStatus.IDS_OK,
+                                 ItemDeletionStatus.IDS_NONEXISTENT)]
+    if stuck:
+        locked = sum(1 for r in stuck
+                     if r.status == ItemDeletionStatus.IDS_IMMUTABLE)
+        raise RuntimeError(
+            f"{len(stuck)} existing overlay image(s) could not be removed"
+            + (f" ({locked} locked)" if locked else "")
+            + " - unlock them in KiCad, or delete them by hand, then run "
+              "again (a new image would otherwise stack on top).")
+    return len(results)
 
 
 def push_result_overlays(board: Board, stack, result,
                          lock: bool = False) -> None:
     """EXPERIMENTAL: the solved |J| of every included copper layer as an
     unlocked reference image on config.OVERLAY_LAYERS (stackup order,
-    top first; existing images there are replaced). Editor-only -
-    reference images never plot. Per-layer failures are reported and
-    skipped, never fatal to the run."""
+    top first; existing images there are replaced, and slots this run
+    does not write are cleared so no stale heatmap is left behind).
+    The whole push is one commit, so a single undo reverts it. Editor-
+    only - reference images never plot. Per-layer failures are reported
+    and skipped, never fatal to the run."""
     from kipy.board_types import ReferenceImage
     from kipy.geometry import Vector2
 
@@ -683,23 +722,46 @@ def push_result_overlays(board: Board, stack, result,
               f"{', '.join(names[len(config.OVERLAY_LAYERS):])} skipped")
     ny, nx = stack.shape2d
     w_nm, h_nm = nx * stack.h_nm, ny * stack.h_nm
-    for src, dest_name in pairs:
-        try:
-            dest = layer_from_canonical_name(dest_name)
-            png = heatmap_png(result.Jmag * 1e-6, names.index(src))
-            remove_overlays(board, dest)
-            ref = ReferenceImage()
-            ref.layer = dest
-            ref.position = Vector2.from_xy(round(stack.x0_nm + w_nm / 2),
-                                           round(stack.y0_nm + h_nm / 2))
-            ref.image_scale = w_nm / (nx * OVERLAY_PIX_NM)
-            ref.image_data = png
-            ref.locked = lock
-            _create_reference_image(board, ref)
-            print(f"overlay: |J| of {src} -> {dest_name} "
-                  f"({len(png) / 1024:.0f} kB)")
-        except Exception as e:
-            print(f"overlay: {src} -> {dest_name} failed: {e}")
+
+    commit = board.begin_commit() if hasattr(board, "begin_commit") else None
+    done = False
+    try:
+        # a narrower run than last time writes fewer slots; whatever the
+        # zip above left out still holds the previous solve's heatmap and
+        # would read as current, so clear it
+        for dest_name in config.OVERLAY_LAYERS[len(pairs):]:
+            try:
+                if remove_overlays(board, layer_from_canonical_name(dest_name)):
+                    print(f"overlay: cleared stale {dest_name}")
+            except Exception as e:
+                print(f"overlay: clearing stale {dest_name} failed: {e}")
+
+        for src, dest_name in pairs:
+            try:
+                dest = layer_from_canonical_name(dest_name)
+                png = heatmap_png(result.Jmag * 1e-6, names.index(src))
+                remove_overlays(board, dest)
+                ref = ReferenceImage()
+                ref.layer = dest
+                ref.position = Vector2.from_xy(round(stack.x0_nm + w_nm / 2),
+                                               round(stack.y0_nm + h_nm / 2))
+                ref.image_scale = w_nm / (nx * OVERLAY_PIX_NM)
+                ref.image_data = png
+                ref.locked = lock
+                _create_reference_image(board, ref)
+                print(f"overlay: |J| of {src} -> {dest_name} "
+                      f"({len(png) / 1024:.0f} kB)")
+            except Exception as e:
+                print(f"overlay: {src} -> {dest_name} failed: {e}")
+        if commit is not None:
+            board.push_commit(commit, "Fill Resistance |J| overlays")
+        done = True
+    finally:
+        if commit is not None and not done:
+            try:
+                board.drop_commit(commit)
+            except Exception:
+                pass
 
 
 # --- top level ----------------------------------------------------------------

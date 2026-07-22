@@ -214,7 +214,11 @@ class _Dialog(QDialog):
                 raise ValueError("Cell size must be > 0 µm.")
         try:
             freq = skin.parse_frequency(self.freq_edit.text())
-        except ValueError:
+        except ValueError as exc:
+            # as in number(): keep parse_frequency's own explanation for
+            # the inputs it rejects deliberately, not just "unparseable"
+            if any(k in str(exc) for k in ("separator", "negative")):
+                raise ValueError(f"Frequency: {exc}")
             raise ValueError(
                 f"Frequency: cannot parse '{self.freq_edit.text()}' "
                 f"(examples: 0, 142k, 1.5M).")
