@@ -47,7 +47,12 @@ SWIG API. Requires KiCad **10.0.1+**.
    ```
 4. **Restart KiCad**; first load builds the plugin venv (numpy, scipy,
    matplotlib, PySide6 — takes minutes; the Ω button appears when done).
-   If stuck: Preferences → Plugins → *Recreate Plugin Environment*.
+   If stuck: in the PCB editor, Preferences → *PCB Editor → Action
+   Plugins*, **right-click** the plugin's row → *Recreate Plugin
+   Environment* (context menu only — there is no button). Manual
+   equivalent: delete
+   `%LOCALAPPDATA%\kicad\10.0\python-environments\th.co.b4l.fill-resistance`
+   and restart KiCad.
 
 ## Usage
 
@@ -319,7 +324,9 @@ GPL-3.0-or-later — see [LICENSE](LICENSE).
 ## Troubleshooting
 
 - **No toolbar button**: venv still building (wait), or build failed →
-  *Recreate Plugin Environment*; check the interpreter path (setup 2).
+  *Recreate Plugin Environment* (right-click the plugin's row in
+  Preferences → *PCB Editor → Action Plugins*); check the interpreter
+  path (setup 2).
 - **"Could not connect to KiCad's IPC API"**: API server not enabled, or
   KiCad not running (no headless mode in KiCad 10).
 - **"KiCad is busy"**: a modal dialog is open in KiCad — close it, rerun.
