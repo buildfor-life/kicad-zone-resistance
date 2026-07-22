@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import config, pipeline
+from . import config, pipeline, progress
 from .errors import UserFacingError
 from .geometry import load_problem
 from .skin import parse_frequency
@@ -51,6 +51,9 @@ def main(argv=None) -> int:
     ap.add_argument("--force-iterative", action="store_true",
                     help="use the iterative solver (AMG-CG, or Jacobi-CG "
                          "without pyamg) regardless of problem size")
+    ap.add_argument("--progress", action="store_true",
+                    help="show the busy window during the solve, as the "
+                         "KiCad plugin does (needs a GUI)")
     ap.add_argument("--adaptive", action=argparse.BooleanOptionalAction,
                     default=None,
                     help="adaptive quadtree grid (coarse plane interiors); "
@@ -86,13 +89,20 @@ def main(argv=None) -> int:
             return 1
 
     outdir = args.out if args.out is not None else args.dump.parent
+    if args.progress:
+        progress.start()
     try:
         pipeline.run(problem, outdir, show=not args.no_show,
                      i_test=args.current, freq_hz=args.freq,
                      contact_model=args.contact_model)
+    except progress.Cancelled:
+        print("cancelled")
+        return 1
     except UserFacingError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    finally:
+        progress.done()
     return 0
 
 

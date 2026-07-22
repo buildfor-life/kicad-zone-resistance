@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 import traceback
 
-from . import config, pipeline, report
+from . import config, pipeline, progress, report
 from .errors import CandidateError, UserFacingError
 
 
@@ -89,6 +89,9 @@ def main() -> None:
         if selection is None:
             print("cancelled")
             return
+        # the solve owns the thread from here; without this the plugin
+        # looks like it did nothing until the figures appear
+        progress.start()
 
         if selection.contact1 != "auto":
             for e in es1:
@@ -122,10 +125,14 @@ def main() -> None:
                      freq_hz=selection.freq_hz,
                      contact_model=selection.contact_model,
                      overlay=overlay_cb)
+    except progress.Cancelled:
+        print("cancelled")             # user's own doing: no error figure
     except UserFacingError as e:
         _fail(str(e), outdir)
     except Exception:
         _fail(traceback.format_exc(), outdir)
+    finally:
+        progress.done()                # also on the error paths
 
 
 if __name__ == "__main__":

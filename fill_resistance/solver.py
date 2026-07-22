@@ -45,7 +45,7 @@ from scipy import sparse
 from scipy.sparse import csgraph
 from scipy.sparse import linalg as sla
 
-from . import config, skin
+from . import config, progress, skin
 from .errors import ConnectivityError, ElectrodeError, SolverError
 from .geometry import Problem, slot_distance
 from .raster import RasterStack, electrodes_touch
@@ -375,12 +375,14 @@ class PreparedSolver:
 
     def solve(self, b: np.ndarray) -> tuple[np.ndarray, SolveInfo]:
         if self._lu is not None:
+            progress.tick()      # direct solve: one shot, no iterations
             return self._lu.solve(b), SolveInfo(method="spsolve",
                                                 n_unknowns=self.n)
         if self._ml is not None:
             residuals: list[float] = []
             x = self._ml.solve(b, tol=config.AMG_TOL, maxiter=300,
-                               accel="cg", residuals=residuals)
+                               accel="cg", residuals=residuals,
+                               callback=lambda _: progress.tick())
             res = float(np.linalg.norm(b - self._A @ x)
                         / max(np.linalg.norm(b), 1e-300))
             if not np.isfinite(res) or res > 1e-6:
@@ -404,7 +406,7 @@ def _solve_amg(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, SolveIn
     ml = pyamg.smoothed_aggregation_solver(A.tocsr(), max_coarse=500)
     residuals: list[float] = []
     x = ml.solve(b, tol=config.AMG_TOL, maxiter=300, accel="cg",
-                 residuals=residuals)
+                 residuals=residuals, callback=lambda _: progress.tick())
     res = float(np.linalg.norm(b - A @ x) / max(np.linalg.norm(b), 1e-300))
     if not np.isfinite(res) or res > 1e-6:
         raise SolverError(
@@ -428,6 +430,7 @@ def _solve_cg_jacobi(A: sparse.csr_matrix, b: np.ndarray) -> tuple[np.ndarray, S
     def count(_):
         nonlocal iters
         iters += 1
+        progress.tick()
 
     try:
         x, code = sla.cg(A, b, M=M, rtol=config.CG_TOL,

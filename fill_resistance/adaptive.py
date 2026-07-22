@@ -34,7 +34,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph
 
-from . import config, quadtree, skin
+from . import config, progress, quadtree, skin
 from . import solver as sv
 from .errors import ConnectivityError
 from .geometry import Problem
@@ -300,9 +300,11 @@ def run_solve_adaptive(problem: Problem, stack: RasterStack,
     corr = np.zeros(len(edges.a))
     faces = e_axis >= 0
     fa, fb = edges.a[faces], edges.b[faces]
-    for _ in range(max(0, int(config.ADAPTIVE_CORRECTION_PASSES))):
+    passes = max(0, int(config.ADAPTIVE_CORRECTION_PASSES))
+    for p in range(passes):
         if not faces.any():
             break
+        progress.stage(f"correction pass {p + 1}/{passes} ...")
         gx, gy = _leaf_gradients(N, fa, fb, cxg, cyg, Vflat)
         gt = np.where(e_axis[faces] == 0, 0.5 * (gy[fa] + gy[fb]),
                       0.5 * (gx[fa] + gx[fb]))

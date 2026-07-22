@@ -43,7 +43,7 @@ from matplotlib.gridspec import GridSpec  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 from matplotlib.widgets import CheckButtons  # noqa: E402
 
-from . import config  # noqa: E402
+from . import config, progress  # noqa: E402
 
 _BG = "#f5f3f0"
 _COPPER = "#c98b4e"
@@ -514,11 +514,15 @@ def save_and_show(figs_named: list[tuple], outdir: Path | None,
                   show: bool = True) -> list[Path]:
     """figs_named: [(figure, basename), ...]. Saves first, then shows."""
     saved = []
+    progress.stage("laying out figures ...", echo=False)
     for fig, _ in figs_named:
         _resolve_label_overlaps(fig)
     if outdir is not None:
         outdir.mkdir(parents=True, exist_ok=True)
         for fig, name in figs_named:
+            # full-DPI savefig with tight bounding boxes is seconds per
+            # figure - the progress window has to stay up for it
+            progress.stage(f"saving {name}.png ...", echo=False)
             panel = getattr(fig, "_layer_panel", None)
             if panel is not None:
                 panel.set_visible(False)     # PNGs carry no checkboxes
@@ -531,13 +535,18 @@ def save_and_show(figs_named: list[tuple], outdir: Path | None,
             print(f"saved {p}")
     if show and config.INTERACTIVE:
         if INTERACTIVE_BACKEND:
+            progress.stage("opening the figure windows ...", echo=False)
             for fig, _ in figs_named:
                 _fit_to_screen(fig)
+            progress.done()      # last thing before the figures are up
             _raise_windows()
             plt.show()
         else:
+            progress.done()
             for p in saved:
                 _open_in_viewer(p)
+    else:
+        progress.done()
     plt.close("all")
     return saved
 
