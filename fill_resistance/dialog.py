@@ -137,10 +137,10 @@ class _Dialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         note = QLabel("Multiple layers are coupled through the net's "
-                      "via/through-pad barrels. At f > 0 the foil-thickness "
-                      "skin effect is applied per layer; lateral (proximity) "
-                      "redistribution is not modeled, so AC results are a "
-                      "lower bound.")
+                      "via/through-pad barrels. f > 0 applies only the "
+                      "foil-thickness skin effect (a lower bound on the "
+                      "resistance rise) - not an AC impedance simulation: "
+                      "proximity and inductance are not modeled.")
         note.setWordWrap(True)
         note.setStyleSheet("color: gray; font-size: 10px;")
         lay.addWidget(note)

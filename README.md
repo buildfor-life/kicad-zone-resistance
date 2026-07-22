@@ -1,15 +1,17 @@
 # Fill Resistance — KiCad 10 plugin
 
-Computes the **DC or AC resistance of copper zone fills and traces**
+Computes the **DC resistance of copper zone fills and traces**
 between two contacts, **single- or multi-layer**: the chosen net's fills
 (teardrops included) and tracks on the selected copper layers are
 solved as coupled finite-difference sheets linked by the net's **via
-and through-hole-pad barrels** (18 µm plating, configurable). At a user-set **frequency** the exact 1D foil/barrel
-skin-effect correction is applied (AC results are a rigorous lower
-bound; see *Model & limits*). Shows per-layer rasterized maps,
-potential, current density, and **power density**, and reports **per-via
-currents** (via ampacity!) and total dissipation at a **selectable test
-current**. PNGs + a text summary are saved per run.
+and through-hole-pad barrels** (18 µm plating, configurable). Shows
+per-layer rasterized maps, potential, current density, and **power
+density**, and reports **per-via currents** (via ampacity!) and total
+dissipation at a **selectable test current**. PNGs + a text summary are
+saved per run. An optional **skin-effect correction** (exact 1D
+foil/barrel solution at a user-set frequency) estimates the resistive
+skin rise only — it is **not** an AC impedance simulation (no proximity
+effect, no inductance; see *Model & limits*).
 
 ![Current density on a two-layer demo net](docs/img/demo-current.png)
 *Real output on a synthetic two-layer net: current from a soldered
@@ -236,10 +238,14 @@ SWIG API. Requires KiCad **10.0.1+**.
   isolated foil), and the analogous correction for the 18 µm barrel wall.
   Enter one frequency per run (e.g. a switching harmonic, with its RMS
   amplitude as the test current); suffixes `k`/`M` are accepted.
-  **Caveat:** only through-thickness crowding is modeled. Lateral
-  (proximity-effect) redistribution needs a magneto-quasistatic solver
-  and is not captured — since the resistance-driven distribution is the
-  minimum-dissipation one, AC results are a rigorous **lower bound**.
+  **Caveat:** this is **not an AC impedance simulation** — skin
+  resistance is only a small part of real AC behavior. Only
+  through-thickness crowding is modeled: lateral (proximity-effect)
+  redistribution needs a magneto-quasistatic solver and is not
+  captured — since the resistance-driven distribution is the
+  minimum-dissipation one, the f > 0 resistance is a rigorous **lower
+  bound** — and inductance, usually the dominant term of a real AC
+  impedance, is absent entirely.
   Rule of thumb for 70 µm foil: skin is negligible below ~300 kHz
   (δ = 173 µm at 142 kHz), ~+11 % at 1 MHz. At f > 0 the |J| maps are
   referenced to the skin-reduced conduction-equivalent thickness

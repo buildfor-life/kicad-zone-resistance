@@ -4,7 +4,7 @@
 [project]
 name = "fill-resistance"
 version = "1.2.1"
-description = "DC/AC resistance of copper zone fills and traces between two contacts (KiCad 10 plugin)"
+description = "DC resistance of copper zone fills and traces between two contacts (KiCad 10 plugin)"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
