@@ -31,13 +31,13 @@ SWIG API. Requires KiCad **10.0.1+**.
 ## Setup (one-time)
 
 The plugin is developed and tested on **Windows**; **macOS works**
-(field-tested on KiCad 10 after a round of mac-specific fixes).
-**Linux is expected to work but is untested so far** — the code and
-the dependency stack have been audited (KiCad builds the plugin a
-private Python venv from `requirements.txt` on every platform, from
-pre-built wheels only, no compiler needed), but nobody has run the
-plugin there yet. Reports welcome! Steps 1–4 are the same everywhere;
-OS specifics are spelled out per step and in *Platform notes* below.
+(field-tested on KiCad 10 after a round of mac-specific fixes), and
+**Linux works** (field-tested on NixOS — the hardest Linux to run pip
+wheels on; mainstream FHS distributions should be no harder, reports
+welcome). KiCad builds the plugin a private Python venv from
+`requirements.txt` on every platform, from pre-built wheels only, no
+compiler needed. Steps 1–4 are the same everywhere; OS specifics are
+spelled out per step and in *Platform notes* below.
 
 1. **Enable the API server**: KiCad → Preferences → Plugins → check
    *Enable KiCad API*.
@@ -87,27 +87,23 @@ OS specifics are spelled out per step and in *Platform notes* below.
   Plot and dialog windows may open **behind** the KiCad window (they
   are raised best-effort) — check the Dock if nothing seems to appear
   after a solve.
-- **Linux** — **untested** (audited only, same caveat). The venv uses
+- **Linux** — **works** (field-tested on NixOS, KiCad 10; mainstream
+  distributions are audited but not yet field-tested). The venv uses
   the system Python (3.9+), so the stack matches your distribution.
   On **ARM64 (aarch64)** there are no pyamg wheels —
   `requirements.txt` skips pyamg there and the solver falls back to
   Jacobi-CG: same results, noticeably slower on large grids.
-  **NixOS**: pip's Linux wheels link against standard FHS library
-  paths, which NixOS does not provide — PySide6 fails with
-  `libgthread-2.0.so.0: cannot open shared object file`. The plugin
-  cannot fix this from inside its venv (KiCad installs wheels only);
-  run KiCad inside an FHS environment. `steam-run kicad` alone is
-  **not** enough: its runtime predates Qt 6.5's hard requirement for
-  `libxcb-cursor0`, so Qt aborts with *"no Qt platform plugin could
-  be initialized"*. Supply that one library on top:
-  ```sh
-  XCBCUR=$(nix build --no-link --print-out-paths nixpkgs#xcb-util-cursor)
-  QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH=$XCBCUR/lib steam-run kicad
-  ```
-  or build a dedicated FHS wrapper with `buildFHSEnv` whose
-  `targetPkgs` include `kicad`, `xcb-util-cursor`, `glib`,
-  `fontconfig`, `freetype`, `dbus`, `libGL`, `libxkbcommon`,
-  `wayland` and the `xorg` X11/xcb libraries.
+  **NixOS**: **works** (field-tested on NixOS 26.05, Plasma 6). pip's
+  Linux wheels link against standard FHS library paths, which NixOS
+  does not provide — PySide6 fails with `libgthread-2.0.so.0: cannot
+  open shared object file`. The plugin cannot fix this from inside
+  its venv (KiCad installs wheels only); run KiCad inside an FHS
+  environment built with `buildFHSEnv`, and — on KDE Plasma — unset
+  `QT_PLUGIN_PATH`, which otherwise poisons the wheel's bundled Qt
+  with the system's Qt plugins. The tested wrapper (exact package
+  list incl. the non-obvious `zstd.out` and xcb-util family), a
+  `steam-run` quick test, and a debugging guide are in
+  [docs/NIXOS.md](docs/NIXOS.md).
 
 ## Usage
 

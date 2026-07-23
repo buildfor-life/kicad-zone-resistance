@@ -53,9 +53,9 @@ def main() -> None:
                 f"A compiled dependency cannot load its system "
                 f"libraries: {e}\nThe plugin venv is built from pip "
                 f"wheels, which expect standard (FHS) library paths. "
-                f"On NixOS, run KiCad inside an FHS environment (e.g. "
-                f"steam-run) or enable programs.nix-ld with Qt's "
-                f"runtime libraries - see README, Platform notes."
+                f"On NixOS, run KiCad inside an FHS environment "
+                f"(buildFHSEnv wrapper, or steam-run for a quick "
+                f"test) - see docs/NIXOS.md in the plugin repo."
             )
         try:
             kicad, board = board_io.connect()
