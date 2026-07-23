@@ -1,6 +1,7 @@
 """Output directory, summary.txt, geometry dump, stdout one-liner."""
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -14,8 +15,20 @@ from .solver import Result
 
 def make_output_dir(board_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = Path(board_dir) / config.OUTPUT_DIRNAME / stamp
-    out.mkdir(parents=True, exist_ok=True)
+    board_dir = Path(board_dir)
+    out = board_dir / config.OUTPUT_DIRNAME / stamp
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # The board can live somewhere unwritable - e.g. the demos
+        # folder on the mounted KiCad installer image (read-only, and
+        # how the first macOS field test was run). Results still have
+        # to land somewhere the figures/summary can be written.
+        out = (Path(tempfile.gettempdir()) / config.OUTPUT_DIRNAME
+               / f"{board_dir.name}-{stamp}")
+        print(f"board directory not writable ({e}); saving results to "
+              f"{out}")
+        out.mkdir(parents=True, exist_ok=True)
     return out
 
 

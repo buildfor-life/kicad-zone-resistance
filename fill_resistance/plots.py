@@ -1,8 +1,9 @@
 """Figures: per-layer rasterized maps, potential, current density, power
 density, and the error figure. PNGs are saved BEFORE any window opens.
 
-Backend: interactive if a GUI toolkit exists (tkinter, else Qt), else Agg
-with os.startfile on the saved PNGs so results are never silent.
+Backend: interactive if a GUI toolkit exists (Qt first, tkinter as a
+fallback), else Agg with the OS default viewer on the saved PNGs so
+results are never silent.
 """
 from __future__ import annotations
 
@@ -18,19 +19,23 @@ import numpy as np
 
 def _pick_backend():
     """matplotlib.use() is lazy and 'succeeds' for backends whose GUI
-    toolkit is missing (KiCad's Python has no tkinter), so probe the
-    toolkits explicitly."""
-    try:
-        import tkinter  # noqa: F401
-        return "TkAgg"
-    except Exception:
-        pass
+    toolkit is missing (KiCad's Windows Python has no tkinter), so probe
+    the toolkits explicitly. Qt MUST come first: PySide6 is a hard
+    dependency and the selection dialog / progress window put a Qt event
+    loop in this process, after which matplotlib refuses TkAgg
+    ("Cannot load backend 'TkAgg' ... as 'qt' is currently running") -
+    exactly what happened on macOS, whose bundled Python ships tkinter."""
     for qt in ("PySide6", "PyQt6", "PyQt5", "PySide2"):
         try:
             __import__(qt)
             return "QtAgg" if qt in ("PySide6", "PyQt6") else "Qt5Agg"
         except Exception:
             continue
+    try:
+        import tkinter  # noqa: F401
+        return "TkAgg"
+    except Exception:
+        pass
     return None
 
 

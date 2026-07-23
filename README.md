@@ -123,7 +123,10 @@ notes* below.
    multi-layer pours at fine cell sizes may run for minutes (on our
    test setup a typical real-board run finishes in ≈ 8 s). Then read
    R / voltage drop / total power in the figure titles and status
-   bar. Outputs land in `<board dir>/fill_res_results/<timestamp>/`:
+   bar. Outputs land in `<board dir>/fill_res_results/<timestamp>/`
+   (if the board directory is not writable — e.g. a demo project opened
+   straight from the mounted installer image — a temp directory is used
+   instead and its path printed to the Messages panel):
    per-layer `1_raster_map` / `2_potential` / `3_current_density` /
    `4_power_density` PNGs, `summary.txt` (incl. the busiest vias with
    per-via current and dissipation, and the **current through each
