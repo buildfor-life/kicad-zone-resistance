@@ -57,36 +57,50 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # git in every list: the checkout below is plain git because
+          # actions/checkout is a JS action and act_runner (unlike
+          # GitHub's runners) injects no node into job containers -
+          # plain distro images crash it with "node: executable file
+          # not found in $PATH".
           - distro: debian:12
             setup: >
               apt-get update -qq && apt-get install -y -qq
-              curl ca-certificates
+              curl ca-certificates git
               libglib2.0-0 libgl1 libegl1 libopengl0 libfontconfig1
               libfreetype6 libdbus-1-3 libxkbcommon0 libzstd1 libxcb1
               libx11-6 libxext6 libxrender1 libsm6 libice6
           - distro: ubuntu:24.04
             setup: >
               apt-get update -qq && apt-get install -y -qq
-              curl ca-certificates
+              curl ca-certificates git
               libglib2.0-0 libgl1 libegl1 libopengl0 libfontconfig1
               libfreetype6 libdbus-1-3 libxkbcommon0 libzstd1 libxcb1
               libx11-6 libxext6 libxrender1 libsm6 libice6
           - distro: fedora:latest
             setup: >
               dnf install -y -q
+              git-core
               glib2 mesa-libGL mesa-libEGL libglvnd-opengl fontconfig
               freetype dbus-libs libxkbcommon libzstd libxcb libX11
               libXext libXrender libSM libICE
           - distro: archlinux:latest
             setup: >
               pacman -Syu --noconfirm --needed
-              curl glib2 libglvnd fontconfig freetype2 dbus
+              curl git
+              glib2 libglvnd fontconfig freetype2 dbus
               libxkbcommon zstd libxcb libx11 libxext libxrender
               libsm libice
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Distro Qt runtime libraries
+      - name: Distro Qt runtime libraries + git
         run: ${{ matrix.setup }}
+      # Plain-git checkout: works in any container with git alone.
+      # (A private repo would need ${{ github.token }} on the URL.)
+      - name: Checkout
+        run: |
+          git init -q .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git fetch -q --depth 50 origin "${{ github.ref }}"
+          git checkout -q "${{ github.sha }}"
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
