@@ -39,9 +39,24 @@ def _fail(message: str, outdir) -> None:
 def main() -> None:
     outdir = None
     try:
-        from kipy.errors import ApiError
+        try:
+            from kipy.errors import ApiError
 
-        from . import board_io, dialog
+            from . import board_io, dialog
+        except ImportError as e:
+            if "cannot open shared object file" not in str(e):
+                raise
+            # pip's Linux wheels link against FHS system libraries;
+            # on NixOS those paths don't exist and PySide6/pynng die
+            # exactly like this. Nothing inside the venv can fix it.
+            raise UserFacingError(
+                f"A compiled dependency cannot load its system "
+                f"libraries: {e}\nThe plugin venv is built from pip "
+                f"wheels, which expect standard (FHS) library paths. "
+                f"On NixOS, run KiCad inside an FHS environment (e.g. "
+                f"steam-run) or enable programs.nix-ld with Qt's "
+                f"runtime libraries - see README, Platform notes."
+            )
         try:
             kicad, board = board_io.connect()
             stackup = board_io.get_stackup_info(board)

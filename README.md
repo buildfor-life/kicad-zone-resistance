@@ -92,6 +92,14 @@ OS specifics are spelled out per step and in *Platform notes* below.
   On **ARM64 (aarch64)** there are no pyamg wheels —
   `requirements.txt` skips pyamg there and the solver falls back to
   Jacobi-CG: same results, noticeably slower on large grids.
+  **NixOS**: pip's Linux wheels link against standard FHS library
+  paths, which NixOS does not provide — PySide6 fails with
+  `libgthread-2.0.so.0: cannot open shared object file`. The plugin
+  cannot fix this from inside its venv (KiCad installs wheels only):
+  run KiCad inside an FHS environment (e.g. `steam-run kicad`) or
+  enable `programs.nix-ld` with Qt's runtime libraries (glib,
+  fontconfig, freetype, dbus, libGL, libxkbcommon and the X11/xcb
+  set).
 
 ## Usage
 
