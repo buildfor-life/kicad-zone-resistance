@@ -68,7 +68,7 @@ def write_summary(outdir: Path, problem: Problem, stack: RasterStack,
         f"resistivity:       {problem.rho_ohm_m:.3e} ohm*m",
         f"via plating:       {problem.plating_nm / 1000:.0f} um",
         "",
-        (f"frequency:         "
+        ("frequency:         "
          + (f"{result.freq_hz:g} Hz (skin depth {result.skin_depth_um:.0f} um)"
             if result.freq_hz > 0 else "DC")),
         f"RESISTANCE:        {result.R_ohm * 1000:.6g} mOhm"
@@ -127,7 +127,7 @@ def write_summary(outdir: Path, problem: Problem, stack: RasterStack,
         f"contact model:     {result.contact_model}"
         + ("  (uniform orthogonal injection; R is the upper contact bound)"
            if result.contact_model == "uniform" else "  (ideal bonded lug)"),
-        f"terminals:",
+        "terminals:",
         f"  V+ ({len(problem.electrodes1)} injection area(s)):",
         *(f"    {_electrode_line(e)}" for e in problem.electrodes1),
         f"  V- ({len(problem.electrodes2)} injection area(s)):",

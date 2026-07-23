@@ -26,14 +26,18 @@ def _pick_backend():
     ("Cannot load backend 'TkAgg' ... as 'qt' is currently running") -
     exactly what happened on macOS, whose bundled Python ships tkinter.
 
-    The probe must import the binding's native core, not just the
-    package: on NixOS `import PySide6` succeeds (pure __init__) while
-    QtCore's .so cannot find the system libraries pip wheels expect
-    ("libgthread-2.0.so.0: cannot open shared object file") - promising
-    QtAgg then kills even the error figure at switch_backend time."""
+    The probe must import QtWidgets, not just the package or QtCore:
+    on NixOS `import PySide6` succeeds (pure __init__) while QtCore's
+    .so cannot find the system libraries pip wheels expect
+    ("libgthread-2.0.so.0: cannot open shared object file"), and on a
+    partially provisioned system QtCore's deps (glib, icu) can be
+    present while QtWidgets/QtGui still miss libGL/libEGL. matplotlib's
+    qt backend imports QtCore, QtGui and QtWidgets, so probe the widest
+    one - promising QtAgg then kills even the error figure at
+    switch_backend time."""
     for qt in ("PySide6", "PyQt6", "PyQt5", "PySide2"):
         try:
-            __import__(qt + ".QtCore")
+            __import__(qt + ".QtWidgets")
             return "QtAgg" if qt in ("PySide6", "PyQt6") else "Qt5Agg"
         except Exception:
             continue

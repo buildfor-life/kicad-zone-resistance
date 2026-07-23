@@ -20,19 +20,27 @@ def test_backend_prefers_qt_over_tk():
     assert plots._pick_backend() in ("QtAgg", "Qt5Agg")
 
 
-def test_backend_probe_requires_working_qtcore(monkeypatch):
+def test_backend_probe_requires_working_qt_gui_stack(monkeypatch):
     # NixOS: `import PySide6` succeeds (a pure-Python __init__) while
-    # QtCore's .so cannot load the FHS system libraries pip wheels
-    # expect. The probe must import the native core and fall through -
-    # promising QtAgg kills even the error figure at switch_backend
-    # time, and the failure report with it.
+    # the native .so's cannot load the FHS system libraries pip wheels
+    # expect; on a partially provisioned system even QtCore loads
+    # (glib, icu present) while QtWidgets/QtGui still miss libGL. The
+    # probe must import QtWidgets and fall through - promising QtAgg
+    # kills even the error figure at switch_backend time, and the
+    # failure report with it. The mock mirrors that faithfully (bare
+    # package and QtCore succeed, GUI modules fail) so a probe reverted
+    # to `__import__(qt)` or `.QtCore` would wrongly return QtAgg here.
     import builtins
+    import types
     real_import = builtins.__import__
 
     def broken_qt(name, *args, **kwargs):
-        if name.split(".")[0] in ("PySide6", "PyQt6", "PyQt5", "PySide2"):
-            raise ImportError("libgthread-2.0.so.0: cannot open shared "
-                              "object file: No such file or directory")
+        root, _, sub = name.partition(".")
+        if root in ("PySide6", "PyQt6", "PyQt5", "PySide2"):
+            if sub in ("", "QtCore"):
+                return types.ModuleType(name)
+            raise ImportError("libGL.so.1: cannot open shared object "
+                              "file: No such file or directory")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", broken_qt)
