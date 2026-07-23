@@ -128,25 +128,12 @@ jobs:
       - run: uv run python -c "import PySide6.QtWidgets"
       - run: uv run pytest -q
 
-  desktop:
-    name: ${{ matrix.os }} · py${{ matrix.python }}
-    # github.com only: no free Windows/macOS runners on self-hosted
-    # Gitea/Forgejo. Skipped (not queued) elsewhere.
-    if: github.server_url == 'https://github.com'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-        python: ["3.11", "3.13"]
-    env:
-      UV_PYTHON: ${{ matrix.python }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - run: uv sync --frozen
-      - run: uv run python -c "import PySide6.QtWidgets"
-      - run: uv run pytest -q
+  # No windows/macos job: Gitea evaluates a job's `if` only after a
+  # runner with a matching label claims it, so runs-on: windows-latest
+  # cells sit in "Waiting" forever on this instance and pin the whole
+  # run (and badge) there. On a github.com mirror, add the job back:
+  #   matrix os [windows-latest, macos-latest] x python [3.11, 3.13],
+  #   steps: checkout, setup-uv, uv sync --frozen, pytest.
 
   nixos:
     name: NixOS (FHS wrapper from docs/NIXOS.md)
