@@ -28,6 +28,27 @@ happens around the notch on F.Cu.*
 Uses the KiCad **IPC API** (`kicad-python` / `kipy`), not the deprecated
 SWIG API. Requires KiCad **10.0.1+**.
 
+## Platform support
+
+[![tests](https://git.b4l.co.th/B4L/kicad-zone-resistance/actions/workflows/ci.yml/badge.svg?branch=main)](https://git.b4l.co.th/B4L/kicad-zone-resistance/actions)
+
+| Platform                    | Status | Verified by |
+|-----------------------------|:------:|-------------|
+| Windows                     |   ✅   | development platform; CI test suite |
+| macOS                       |   ✅   | field-tested in KiCad 10; CI test suite |
+| NixOS                       |   ✅   | field-tested in KiCad 10 ([setup](docs/NIXOS.md)); CI runs the suite inside the documented FHS env |
+| Debian 12                   |   ✅   | CI test suite in container |
+| Ubuntu 24.04                |   ✅   | CI test suite in container |
+| Fedora (latest)             |   ✅   | CI test suite in container |
+| Arch (latest)               |   ✅   | CI test suite in container |
+
+CI (`.gitea/workflows/ci.yml`) runs the full pytest suite — solver,
+rasterizer, and the platform-fallback regressions — headless against
+the real pip wheels of each row, including the `PySide6.QtWidgets`
+import probe that decides the matplotlib backend. What CI *cannot* do
+is launch KiCad itself, so "runs inside KiCad" remains field-tested
+(Windows continuously, macOS and NixOS per release).
+
 ## Setup (one-time)
 
 The plugin is developed and tested on **Windows**; **macOS works**
