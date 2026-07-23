@@ -30,14 +30,14 @@ SWIG API. Requires KiCad **10.0.1+**.
 
 ## Setup (one-time)
 
-The plugin is developed and tested on **Windows**. **Linux and macOS
-are expected to work but are untested so far** — the code and the
-dependency stack have been audited for all three OSes (KiCad builds
-the plugin a private Python venv from `requirements.txt` on every
-platform, from pre-built wheels only, no compiler needed), but nobody
-has run the plugin there yet. Reports welcome! Steps 1–4 are the same
-everywhere; OS specifics are spelled out per step and in *Platform
-notes* below.
+The plugin is developed and tested on **Windows**; **macOS works**
+(field-tested on KiCad 10 after a round of mac-specific fixes).
+**Linux is expected to work but is untested so far** — the code and
+the dependency stack have been audited (KiCad builds the plugin a
+private Python venv from `requirements.txt` on every platform, from
+pre-built wheels only, no compiler needed), but nobody has run the
+plugin there yet. Reports welcome! Steps 1–4 are the same everywhere;
+OS specifics are spelled out per step and in *Platform notes* below.
 
 1. **Enable the API server**: KiCad → Preferences → Plugins → check
    *Enable KiCad API*.
@@ -78,15 +78,15 @@ notes* below.
 - **Windows** is the development and test platform — everything in
   this README was exercised here. KiCad's bundled Python is 3.13, so
   the venv gets the current dependency stack.
-- **macOS** — **untested** (audited only: dependency wheels, paths and
-  Python-version compatibility were checked, the plugin was never run
-  on a Mac). Requires macOS 12+ (KiCad's own minimum; Intel and Apple
-  Silicon — the dmg is universal). KiCad's bundled Python is **3.9**,
-  so pip resolves an older stack (numpy 2.0, scipy 1.13,
-  matplotlib 3.9, PySide6 6.9/6.10) that the plugin code is kept
-  compatible with. Expect plot and dialog windows to open **behind**
-  the KiCad window (they are raised best-effort) — check the Dock if
-  nothing seems to appear after a solve.
+- **macOS** — **works** (field-tested on KiCad 10). Requires
+  macOS 12+ (KiCad's own minimum; Intel and Apple Silicon — the dmg
+  is universal). KiCad's bundled Python is **3.9**, so pip resolves
+  an older stack (numpy 2.0, scipy 1.13, matplotlib 3.9,
+  PySide6 6.9/6.10); the plugin code is kept 3.9-compatible (guarded
+  by a test) and the suite is also run against that older stack.
+  Plot and dialog windows may open **behind** the KiCad window (they
+  are raised best-effort) — check the Dock if nothing seems to appear
+  after a solve.
 - **Linux** — **untested** (audited only, same caveat). The venv uses
   the system Python (3.9+), so the stack matches your distribution.
   On **ARM64 (aarch64)** there are no pyamg wheels —
