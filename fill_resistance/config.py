@@ -2,6 +2,9 @@
 
 A future version may read overrides from <project>/fill_res_config.json.
 """
+from __future__ import annotations   # KiCad's macOS Python is 3.9: without
+                                     # this, `float | None` annotations are
+                                     # evaluated at import and crash there
 
 # --- Grid sizing ---
 # Benchmarked on the VOUT+ plane (147x59 mm): R changes < 0.3% from
