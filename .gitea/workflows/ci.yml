@@ -94,13 +94,23 @@ jobs:
       - name: Distro Qt runtime libraries + git
         run: ${{ matrix.setup }}
       # Plain-git checkout: works in any container with git alone.
-      # (A private repo would need ${{ github.token }} on the URL.)
+      # (A private repo would need github.token on the URL.) Values
+      # arrive via env, not ${{ }} in the script: a template expansion
+      # inside `run:` would let a crafted PR branch name inject shell
+      # commands into the runner.
       - name: Checkout
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
         run: |
+          case "$REF" in refs/heads/*|refs/tags/*|refs/pull/*) ;; *) echo "unexpected ref: $REF"; exit 1;; esac
+          case "$SHA" in *[!0-9a-f]*|"") echo "unexpected sha"; exit 1;; esac
           git init -q .
-          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
-          git fetch -q --depth 50 origin "${{ github.ref }}"
-          git checkout -q "${{ github.sha }}"
+          git remote add origin "$SERVER_URL/$REPO.git"
+          git fetch -q --depth 50 origin "$REF"
+          git checkout -q "$SHA"
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
