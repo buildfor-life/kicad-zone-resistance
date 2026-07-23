@@ -223,7 +223,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pyamg" },
+    { name = "pyamg", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "pyside6" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -239,7 +239,7 @@ requires-dist = [
     { name = "kicad-python", specifier = ">=0.7.0" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "pyamg" },
+    { name = "pyamg", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "pyside6" },
     { name = "scipy" },
 ]

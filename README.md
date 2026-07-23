@@ -30,14 +30,25 @@ SWIG API. Requires KiCad **10.0.1+**.
 
 ## Setup (one-time)
 
+The plugin runs on **Windows, Linux and macOS** — KiCad builds it a
+private Python venv from `requirements.txt` on every platform, from
+pre-built wheels only (no compiler needed). Steps 1–4 are the same
+everywhere; OS specifics are spelled out per step and in *Platform
+notes* below.
+
 1. **Enable the API server**: KiCad → Preferences → Plugins → check
    *Enable KiCad API*.
-2. **Check the interpreter path** on the same page: should point at the
-   KiCad 10 Python, e.g. `C:\Program Files\KiCad\10.0\bin\pythonw.exe`
-   on Windows or `/usr/bin/python3` on Linux (after a 9→10 upgrade it
-   can point at KiCad 9).
+2. **Check the interpreter path** on the same page (after a 9→10
+   upgrade it can still point at KiCad 9):
+   - **Windows**: KiCad's own Python,
+     `C:\Program Files\KiCad\10.0\bin\pythonw.exe`;
+   - **macOS**: the Python bundled inside the app,
+     `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3`;
+   - **Linux**: the first `python3` on `PATH` — needs Python ≥ 3.9
+     with the `venv` module (Debian/Ubuntu:
+     `sudo apt install python3-venv`).
 3. **Deploy** (dev checkout; end users install the PCM zip instead, see
-   *Packaging / publishing*):
+   *Packaging / publishing*). Windows:
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy.ps1        # junction (dev)
    powershell -ExecutionPolicy Bypass -File deploy.ps1 -Mode Copy
@@ -47,14 +58,34 @@ SWIG API. Requires KiCad **10.0.1+**.
    python3 tools/deploy.py            # symlink (dev)
    python3 tools/deploy.py --copy
    ```
+   Plugin directory: `Documents/KiCad/10.0/plugins` on Windows and
+   macOS, `~/.local/share/kicad/10.0/plugins` on Linux.
 4. **Restart KiCad**; first load builds the plugin venv (numpy, scipy,
    matplotlib, PySide6 — takes minutes; the Ω button appears when done).
    If stuck: in the PCB editor, Preferences → *PCB Editor → Action
    Plugins*, **right-click** the plugin's row → *Recreate Plugin
    Environment* (context menu only — there is no button). Manual
-   equivalent: delete
-   `%LOCALAPPDATA%\kicad\10.0\python-environments\th.co.b4l.fill-resistance`
-   and restart KiCad.
+   equivalent: delete the plugin's venv and restart KiCad —
+   - Windows: `%LOCALAPPDATA%\kicad\10.0\python-environments\th.co.b4l.fill-resistance`
+   - macOS: `~/Library/Caches/kicad/10.0/python-environments/th.co.b4l.fill-resistance`
+   - Linux: `~/.cache/kicad/10.0/python-environments/th.co.b4l.fill-resistance`
+
+### Platform notes
+
+- **Windows** is the development and test platform. KiCad's bundled
+  Python is 3.13, so the venv gets the current dependency stack.
+- **macOS** (12+, KiCad's own minimum; Intel and Apple Silicon —
+  the dmg is universal): KiCad's bundled Python is **3.9**, so pip
+  resolves an older but fully functional stack (numpy 2.0,
+  scipy 1.13, matplotlib 3.9, PySide6 6.9/6.10). The plugin code is
+  kept 3.9-compatible. Plot and dialog windows may open **behind**
+  the KiCad window (they are raised best-effort) — check the Dock if
+  nothing seems to appear after a solve.
+- **Linux**: the venv uses the system Python (3.9+), so the stack
+  matches your distribution. On **ARM64 (aarch64)** there are no
+  pyamg wheels — `requirements.txt` skips pyamg there and the solver
+  falls back to Jacobi-CG: same results, noticeably slower on large
+  grids.
 
 ## Usage
 
@@ -86,7 +117,7 @@ SWIG API. Requires KiCad **10.0.1+**.
    multi-layer pours at fine cell sizes may run for minutes (on our
    test setup a typical real-board run finishes in ≈ 8 s). Then read
    R / voltage drop / total power in the figure titles and status
-   bar. Outputs land in `<board dir>\fill_res_results\<timestamp>\`:
+   bar. Outputs land in `<board dir>/fill_res_results/<timestamp>/`:
    per-layer `1_raster_map` / `2_potential` / `3_current_density` /
    `4_power_density` PNGs, `summary.txt` (incl. the busiest vias with
    per-via current and dissipation, and the **current through each
@@ -292,9 +323,9 @@ accordingly more trustworthy than absolute numbers.
 
 Every run writes `geometry_dump.json`; re-solve without KiCad:
 
-```powershell
-uv run python -m fill_resistance.standalone dump.json `
-    [--current 40] [--cell-um 50] [--layers F.Cu,In1.Cu] [--no-show] `
+```sh
+uv run python -m fill_resistance.standalone dump.json
+    [--current 40] [--cell-um 50] [--layers F.Cu,In1.Cu] [--no-show]
     [--out DIR] [--force-iterative]
 ```
 
@@ -302,7 +333,7 @@ Dev environment, tests, headless extraction — [uv](https://docs.astral.sh/uv/)
 manages the venv from `pyproject.toml`/`uv.lock` (`requirements.txt`
 stays: KiCad builds the plugin's runtime venv from it):
 
-```powershell
+```sh
 uv sync                                              # one-time env setup
 uv run pytest -q                                     # incl. exact analytic cases
 uv run python tools/api_probe.py                     # IPC API probe vs live KiCad
@@ -332,7 +363,8 @@ GPL-3.0-or-later — see [LICENSE](LICENSE).
 - **No toolbar button**: venv still building (wait), or build failed →
   *Recreate Plugin Environment* (right-click the plugin's row in
   Preferences → *PCB Editor → Action Plugins*); check the interpreter
-  path (setup 2).
+  path (setup 2); on Linux make sure `python3-venv` is installed. Last
+  resort: delete the venv directory by hand (setup 4) and restart.
 - **"Could not connect to KiCad's IPC API"**: API server not enabled, or
   KiCad not running (no headless mode in KiCad 10).
 - **"KiCad is busy"**: a modal dialog is open in KiCad — close it, rerun.
