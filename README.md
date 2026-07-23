@@ -95,11 +95,19 @@ OS specifics are spelled out per step and in *Platform notes* below.
   **NixOS**: pip's Linux wheels link against standard FHS library
   paths, which NixOS does not provide — PySide6 fails with
   `libgthread-2.0.so.0: cannot open shared object file`. The plugin
-  cannot fix this from inside its venv (KiCad installs wheels only):
-  run KiCad inside an FHS environment (e.g. `steam-run kicad`) or
-  enable `programs.nix-ld` with Qt's runtime libraries (glib,
-  fontconfig, freetype, dbus, libGL, libxkbcommon and the X11/xcb
-  set).
+  cannot fix this from inside its venv (KiCad installs wheels only);
+  run KiCad inside an FHS environment. `steam-run kicad` alone is
+  **not** enough: its runtime predates Qt 6.5's hard requirement for
+  `libxcb-cursor0`, so Qt aborts with *"no Qt platform plugin could
+  be initialized"*. Supply that one library on top:
+  ```sh
+  XCBCUR=$(nix build --no-link --print-out-paths nixpkgs#xcb-util-cursor)
+  QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH=$XCBCUR/lib steam-run kicad
+  ```
+  or build a dedicated FHS wrapper with `buildFHSEnv` whose
+  `targetPkgs` include `kicad`, `xcb-util-cursor`, `glib`,
+  `fontconfig`, `freetype`, `dbus`, `libGL`, `libxkbcommon`,
+  `wayland` and the `xorg` X11/xcb libraries.
 
 ## Usage
 
