@@ -9,9 +9,9 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
-                               QDialogButtonBox, QFormLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem,
-                               QVBoxLayout)
+                               QDialogButtonBox, QFormLayout, QHBoxLayout,
+                               QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QVBoxLayout, QWidget)
 
 from . import config, skin
 
@@ -41,7 +41,8 @@ class Selection:
     adaptive: bool = True
     push_overlays: bool = False   # EXPERIMENTAL in-KiCad |J| overlays
     trim_enabled: bool = False    # EXPERIMENTAL low-current copper marking
-    trim_pct: float = 10.0        # threshold as % of the mean |J|
+    trim_mode: str = "pct"        # "pct" (% of the mean |J|) or "abs" (A/mm2)
+    trim_value: float = 10.0      # threshold in the unit trim_mode names
 
 
 class _Dialog(QDialog):
@@ -140,10 +141,23 @@ class _Dialog(QDialog):
         self.trim_check.setChecked(config.TRIM_ENABLED)
         form.addRow("Low-current copper:", self.trim_check)
 
-        self.trim_edit = QLineEdit(f"{config.TRIM_THRESHOLD_PCT:g}")
-        self.trim_edit.setEnabled(config.TRIM_ENABLED)
-        self.trim_check.toggled.connect(self.trim_edit.setEnabled)
-        form.addRow("Threshold [% of mean |J|]:", self.trim_edit)
+        self.trim_mode_box = QComboBox()
+        self.trim_mode_box.addItem("% of mean |J|", "pct")
+        self.trim_mode_box.addItem("A/mm²", "abs")
+        self.trim_mode_box.setCurrentIndex(1 if config.TRIM_MODE == "abs"
+                                           else 0)
+        self.trim_edit = QLineEdit(self._trim_default())
+        for w in (self.trim_edit, self.trim_mode_box):
+            w.setEnabled(config.TRIM_ENABLED)
+            self.trim_check.toggled.connect(w.setEnabled)
+        self.trim_mode_box.currentIndexChanged.connect(
+            self._trim_mode_changed)
+        trim_row = QWidget()
+        trim_lay = QHBoxLayout(trim_row)
+        trim_lay.setContentsMargins(0, 0, 0, 0)
+        trim_lay.addWidget(self.trim_edit, 1)
+        trim_lay.addWidget(self.trim_mode_box)
+        form.addRow("Threshold:", trim_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._try_accept)
@@ -171,6 +185,19 @@ class _Dialog(QDialog):
         self._desired1, self._desired2 = contact1, contact2
         self.net_box.currentTextChanged.connect(self._refresh)
         self._refresh()
+
+    def _trim_default(self, mode: str | None = None) -> str:
+        mode = mode or self.trim_mode_box.currentData()
+        return (f"{config.TRIM_THRESHOLD_A_MM2:g}" if mode == "abs"
+                else f"{config.TRIM_THRESHOLD_PCT:g}")
+
+    def _trim_mode_changed(self):
+        # swap in the new unit's default, but never clobber a number the
+        # user typed themselves
+        mode = self.trim_mode_box.currentData()
+        other = "pct" if mode == "abs" else "abs"
+        if self.trim_edit.text().strip() in ("", self._trim_default(other)):
+            self.trim_edit.setText(self._trim_default(mode))
 
     def _refresh(self):
         self.error_label.setVisible(False)
@@ -242,12 +269,15 @@ class _Dialog(QDialog):
             extra_cu = number(self.extracu_edit, "Extra Cu")
             if extra_cu < 0:
                 raise ValueError("Extra Cu must be ≥ 0 µm.")
-        trim_pct = config.TRIM_THRESHOLD_PCT
+        trim_mode = self.trim_mode_box.currentData()
+        trim_value = float(self._trim_default(trim_mode))
         if self.trim_check.isChecked():
-            trim_pct = number(self.trim_edit, "Trim threshold")
-            if not 0 < trim_pct < 100:
+            trim_value = number(self.trim_edit, "Trim threshold")
+            if trim_mode == "pct" and not 0 < trim_value < 100:
                 raise ValueError("Trim threshold must be between 0 and "
                                  "100 (% of the mean |J|).")
+            if trim_mode == "abs" and trim_value <= 0:
+                raise ValueError("Trim threshold must be > 0 A/mm².")
         cap_max_drill = config.CAP_MAX_DRILL_MM
         if self.capped_check.isChecked():
             cap_max_drill = number(self.cap_drill_edit, "Capped up to drill")
@@ -274,7 +304,7 @@ class _Dialog(QDialog):
                          adaptive=self.adaptive_check.isChecked(),
                          push_overlays=self.overlay_check.isChecked(),
                          trim_enabled=self.trim_check.isChecked(),
-                         trim_pct=trim_pct)
+                         trim_mode=trim_mode, trim_value=trim_value)
 
     def _try_accept(self) -> None:
         try:

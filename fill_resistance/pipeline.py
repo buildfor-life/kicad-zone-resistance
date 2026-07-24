@@ -13,11 +13,13 @@ from .solver import Result
 def run(problem: Problem, outdir: Path | None, show: bool = True,
         i_test: float | None = None, freq_hz: float = 0.0,
         contact_model: str | None = None, overlay=None,
-        trim_pct: float | None = None, trim_push=None) -> Result:
+        trim_pct: float | None = None, trim_abs: float | None = None,
+        trim_push=None) -> Result:
     """overlay: optional callback(stack, result) run after the solve
     (EXPERIMENTAL in-KiCad overlays); its failures are non-fatal.
-    trim_pct: mark copper below this % of the mean |J| (None = off):
-    per-layer areas are printed, polygons saved to
+    trim_pct / trim_abs: mark copper below this threshold (% of the
+    mean |J| / absolute A/mm2; at most one, both None = off): per-layer
+    areas are printed, polygons saved to
     <outdir>/low_current_copper.json and handed to trim_push, an
     optional callback(trim_result) that pushes them into the board
     (failures non-fatal)."""
@@ -57,8 +59,8 @@ def run(problem: Problem, outdir: Path | None, show: bool = True,
         except Exception as e:
             print(f"overlay push failed: {e}")
 
-    if trim_pct is not None:
-        tr = trim.compute(result, stack, trim_pct)
+    if trim_pct is not None or trim_abs is not None:
+        tr = trim.compute(result, stack, pct=trim_pct, abs_a_mm2=trim_abs)
         print(trim.summary_line(tr))
         if outdir is not None:
             trim.write_json(outdir, tr)

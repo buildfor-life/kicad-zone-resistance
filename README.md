@@ -179,8 +179,13 @@ spelled out per step and in *Platform notes* below.
    `python tools/kicad_heatmap_overlay.py --net X --amps 10`.
 6. **Experimental — low-current copper marking** (dialog checkbox,
    default off): after the solve, the copper whose |J| is **below a
-   threshold** (dialog-settable, default 10 % of the mean |J| over all
-   solved copper) is outlined as **filled graphic polygons** on
+   threshold** is outlined as **filled graphic polygons** on user
+   layers. The threshold is dialog-settable in one of two units
+   (selector next to the field): **relative** — % of the mean |J| over
+   all solved copper (default, 10 %) — or **absolute** in **A/mm²**;
+   since |J| scales with the test current, the absolute variant is
+   meant to be used with the real operating current entered as test
+   current. Polygons land on
    `User.5`…`User.8` (`TRIM_LAYERS` in `fill_resistance/config.py`;
    enable them in Board Setup), copper layers mapped in stackup order,
    top first. Marked specks under `TRIM_MIN_AREA_MM2` (0.5 mm²) are

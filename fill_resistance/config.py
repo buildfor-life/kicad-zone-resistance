@@ -102,10 +102,17 @@ TRIM_ENABLED = False            # dialog default: mark the copper below
                                 # cut list: copper carries little current
                                 # BECAUSE the rest carries it - removal
                                 # redistributes |J|, re-run after changes
-TRIM_THRESHOLD_PCT = 10.0       # threshold as % of the mean |J| over all
-                                # solved copper cells (mean, not max:
-                                # contact-corner spikes would dwarf a
-                                # max-relative threshold); dialog-settable
+TRIM_MODE = "pct"               # dialog default for the threshold unit:
+                                # "pct" (% of the mean |J|) or "abs"
+                                # (A/mm2)
+TRIM_THRESHOLD_PCT = 10.0       # relative threshold: % of the mean |J|
+                                # over all solved copper cells (mean, not
+                                # max: contact-corner spikes would dwarf
+                                # a max-relative threshold)
+TRIM_THRESHOLD_A_MM2 = 1.0      # absolute threshold [A/mm2]. |J| scales
+                                # with the test current, so this is only
+                                # meaningful with the real operating
+                                # current entered as test current
 TRIM_LAYERS = ("User.5", "User.6", "User.7", "User.8")
                                 # copper layers map here in stackup order
                                 # (top first); existing polygons on these

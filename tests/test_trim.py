@@ -22,11 +22,29 @@ def test_low_current_mask_threshold():
     J = np.full((1, 4, 4), np.nan)
     J[0, :2, :] = 1.0                  # 8 cells carrying little
     J[0, 2, :2] = 100.0                # 2 hot cells; mean = 20.8
-    mask, thr = trim.low_current_mask(J, 10.0)
+    mask, thr = trim.low_current_mask(J, pct=10.0)
     assert thr == pytest.approx(2.08)
     assert mask[0, :2, :].all()
     assert not mask[0, 2, :2].any()
     assert not mask[0, 3, :].any()     # NaN = no copper, never marked
+
+
+def test_low_current_mask_absolute():
+    J = np.full((1, 3, 3), np.nan)
+    J[0, 0, :] = 0.5e6                 # 0.5 A/mm2 in A/m2
+    J[0, 1, :] = 2.0e6                 # 2 A/mm2
+    mask, thr = trim.low_current_mask(J, abs_a_mm2=1.0)
+    assert thr == pytest.approx(1.0e6)
+    assert mask[0, 0, :].all()
+    assert not mask[0, 1, :].any()
+
+
+def test_low_current_mask_needs_exactly_one_threshold():
+    J = np.ones((1, 2, 2))
+    with pytest.raises(ValueError):
+        trim.low_current_mask(J)
+    with pytest.raises(ValueError):
+        trim.low_current_mask(J, pct=10.0, abs_a_mm2=1.0)
 
 
 def test_mask_rectangle_polygon():
@@ -80,7 +98,8 @@ def test_compute_and_json(tmp_path):
     J[0, :, :5] = 0.01                 # half of the top layer nearly dead
     J[1, :, :] = 10.0
     stack = _stack(names=["F.Cu", "B.Cu"], h_nm=1_000_000)
-    tr = trim.compute(SimpleNamespace(Jmag=J), stack, 10.0)
+    tr = trim.compute(SimpleNamespace(Jmag=J), stack, pct=10.0)
+    assert tr.mode == "pct" and tr.value == 10.0
     assert [lt.layer for lt in tr.layers] == ["F.Cu", "B.Cu"]
     assert tr.layers[0].polygons and not tr.layers[1].polygons
     assert tr.layers[0].marked_mm2 == pytest.approx(50.0)
@@ -94,6 +113,24 @@ def test_compute_and_json(tmp_path):
     ring = doc["layers"][0]["polygons"][0]["outline_mm"]
     assert all(0 <= x <= 5.5 and 0 <= y <= 10.0 for x, y in ring)
     assert "F.Cu" in trim.summary_line(tr)
+    assert "% of mean" in trim.summary_line(tr)
+
+
+def test_compute_absolute_mode(tmp_path):
+    J = np.full((1, 10, 10), np.nan)
+    J[0, :, :] = 10.0e6                # 10 A/mm2
+    J[0, :, :5] = 0.1e6                # 0.1 A/mm2: below 1 A/mm2
+    stack = _stack(names=["F.Cu"], h_nm=1_000_000)
+    tr = trim.compute(SimpleNamespace(Jmag=J), stack, abs_a_mm2=1.0)
+    assert tr.mode == "abs" and tr.value == 1.0
+    assert tr.threshold_a_mm2 == pytest.approx(1.0)
+    assert tr.layers[0].marked_mm2 == pytest.approx(50.0)
+    line = trim.summary_line(tr)
+    assert "|J| < 1 A/mm2" in line and "% of mean" not in line
+    doc = json.loads(trim.write_json(tmp_path, tr)
+                     .read_text(encoding="utf-8"))
+    assert doc["threshold_mode"] == "absolute"
+    assert doc["threshold_value"] == 1.0
 
 
 def test_trim_shape_proto():

@@ -137,15 +137,19 @@ def main() -> None:
             def overlay_cb(stack, result):
                 board_io.push_result_overlays(board, stack, result)
         trim_cb = None
+        trim_pct = trim_abs = None
         if selection.trim_enabled:
             def trim_cb(tr):
                 board_io.push_trim_polygons(board, tr)
+            if selection.trim_mode == "abs":
+                trim_abs = selection.trim_value
+            else:
+                trim_pct = selection.trim_value
         pipeline.run(problem, outdir, show=True, i_test=selection.current_a,
                      freq_hz=selection.freq_hz,
                      contact_model=selection.contact_model,
                      overlay=overlay_cb,
-                     trim_pct=(selection.trim_pct if selection.trim_enabled
-                               else None),
+                     trim_pct=trim_pct, trim_abs=trim_abs,
                      trim_push=trim_cb)
     except progress.Cancelled:
         print("cancelled")             # user's own doing: no error figure
