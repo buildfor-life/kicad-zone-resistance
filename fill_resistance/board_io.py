@@ -649,7 +649,8 @@ def gather_tht_pad_copper(board: Board, net_name: str
 OVERLAY_PIX_NM = 25.4e6 / 300
 
 
-def _create_reference_image(board: Board, ref) -> None:
+def _create_items_checked(board: Board, items, what: str,
+                          hint: str = "") -> None:
     """create_items with the per-item status surfaced (kipy <= 0.7.1
     swallows it and returns an empty wrapper on failure)."""
     from kipy.proto.common.commands.editor_commands_pb2 import (
@@ -658,33 +659,33 @@ def _create_reference_image(board: Board, ref) -> None:
 
     cmd = CreateItems()
     cmd.header.document.CopyFrom(board._doc)
-    cmd.items.append(pack_any(ref.proto))
-    result = board._kicad.send(cmd, CreateItemsResponse).created_items[0]
-    if result.status.code != 1:                 # 1 = ISC_OK
+    for item in items:
+        cmd.items.append(pack_any(item.proto))
+    results = board._kicad.send(cmd, CreateItemsResponse).created_items
+    bad = [r for r in results if r.status.code != 1]    # 1 = ISC_OK
+    if bad or len(results) != len(items):
+        detail = (f"status {bad[0].status.code} "
+                  f"{bad[0].status.error_message or ''}" if bad
+                  else f"{len(items) - len(results)} item(s) not created")
         raise RuntimeError(
-            f"KiCad rejected the image (status {result.status.code}) "
-            f"{result.status.error_message or ''} - is the layer enabled "
-            f"in Board Setup? (KiCad >= 10.0.1 required)")
+            f"KiCad rejected the {what} ({detail}) - is the layer "
+            f"enabled in Board Setup?{hint}")
 
 
-def remove_overlays(board: Board, layer) -> int:
-    """Remove every reference image on the given layer; returns count.
-
-    remove_items with the per-item status surfaced: kipy discards the
+def _remove_items_checked(board: Board, items, what: str) -> int:
+    """remove_items with the per-item status surfaced: kipy discards the
     DeleteItemsResponse, and its own proto warns the overall status "may
-    return IRS_OK even if no items were deleted" - a locked image comes
-    back IDS_IMMUTABLE. Unchecked, the stale image survives and the new
+    return IRS_OK even if no items were deleted" - a locked item comes
+    back IDS_IMMUTABLE. Unchecked, the stale item survives and the new
     one is stacked on top of it instead of replacing it."""
     from kipy.proto.common.commands.editor_commands_pb2 import (
         DeleteItems, DeleteItemsResponse, ItemDeletionStatus)
 
-    ours = [r for r in board.get_reference_images() if r.layer == layer]
-    if not ours:
+    if not items:
         return 0
-
     cmd = DeleteItems()
     cmd.header.document.CopyFrom(board._doc)
-    cmd.item_ids.extend([r.id for r in ours])
+    cmd.item_ids.extend([it.id for it in items])
     results = board._kicad.send(cmd, DeleteItemsResponse).deleted_items
 
     stuck = [r for r in results
@@ -694,11 +695,18 @@ def remove_overlays(board: Board, layer) -> int:
         locked = sum(1 for r in stuck
                      if r.status == ItemDeletionStatus.IDS_IMMUTABLE)
         raise RuntimeError(
-            f"{len(stuck)} existing overlay image(s) could not be removed"
+            f"{len(stuck)} existing {what}(s) could not be removed"
             + (f" ({locked} locked)" if locked else "")
             + " - unlock them in KiCad, or delete them by hand, then run "
-              "again (a new image would otherwise stack on top).")
+              "again (the replacement would otherwise stack on top).")
     return len(results)
+
+
+def remove_overlays(board: Board, layer) -> int:
+    """Remove every reference image on the given layer; returns count."""
+    return _remove_items_checked(
+        board, [r for r in board.get_reference_images() if r.layer == layer],
+        "overlay image")
 
 
 def push_result_overlays(board: Board, stack, result,
@@ -748,13 +756,102 @@ def push_result_overlays(board: Board, stack, result,
                 ref.image_scale = w_nm / (nx * OVERLAY_PIX_NM)
                 ref.image_data = png
                 ref.locked = lock
-                _create_reference_image(board, ref)
+                _create_items_checked(board, [ref], "image",
+                                      " (KiCad >= 10.0.1 required)")
                 print(f"overlay: |J| of {src} -> {dest_name} "
                       f"({len(png) / 1024:.0f} kB)")
             except Exception as e:
                 print(f"overlay: {src} -> {dest_name} failed: {e}")
         if commit is not None:
             board.push_commit(commit, "Fill Resistance |J| overlays")
+        done = True
+    finally:
+        if commit is not None and not done:
+            try:
+                board.drop_commit(commit)
+            except Exception:
+                pass
+
+
+# --- low-current copper polygons (EXPERIMENTAL) ------------------------------
+
+def remove_trim_polygons(board: Board, layer) -> int:
+    """Remove every graphic polygon on the given layer; returns count."""
+    from kipy.board_types import BoardPolygon
+
+    return _remove_items_checked(
+        board, [s for s in board.get_shapes()
+                if isinstance(s, BoardPolygon) and s.layer == layer],
+        "trim polygon")
+
+
+def _trim_shape(tp, layer, lock: bool):
+    """One filled BoardPolygon (outline + holes) on the given layer -
+    individually selectable, so Edit > Convert can turn it into a rule
+    area or a zone cutout by hand."""
+    from kipy.board_types import BoardPolygon
+    from kipy.geometry import PolygonWithHoles, PolyLine, PolyLineNode
+
+    def poly_line(ring) -> PolyLine:
+        line = PolyLine()
+        for x, y in ring.tolist():
+            line.append(PolyLineNode.from_xy(int(x), int(y)))
+        line.closed = True
+        return line
+
+    pwh = PolygonWithHoles()
+    pwh.outline = poly_line(tp.outline)
+    for hole in tp.holes:
+        pwh.add_hole(poly_line(hole))
+    shape = BoardPolygon()
+    shape.layer = layer
+    shape.locked = lock
+    shape.attributes.fill.filled = True
+    shape.polygons.append(pwh)
+    return shape
+
+
+def push_trim_polygons(board: Board, trim, lock: bool = False) -> None:
+    """EXPERIMENTAL: the below-threshold copper of every included layer
+    as filled graphic polygons on config.TRIM_LAYERS (stackup order, top
+    first; existing polygons on those layers are REPLACED, and slots
+    this run does not write are cleared so no stale suggestion is left
+    behind). The whole push is one commit, so a single undo reverts it.
+    Per-layer failures are reported and skipped, never fatal to the
+    run."""
+    pairs = list(zip(trim.layers, config.TRIM_LAYERS))
+    if len(trim.layers) > len(config.TRIM_LAYERS):
+        skipped = [lt.layer for lt in trim.layers[len(config.TRIM_LAYERS):]]
+        print(f"trim: more copper layers than slots - "
+              f"{', '.join(skipped)} skipped")
+
+    commit = board.begin_commit() if hasattr(board, "begin_commit") else None
+    done = False
+    try:
+        for dest_name in config.TRIM_LAYERS[len(pairs):]:
+            try:
+                if remove_trim_polygons(board,
+                                        layer_from_canonical_name(dest_name)):
+                    print(f"trim: cleared stale {dest_name}")
+            except Exception as e:
+                print(f"trim: clearing stale {dest_name} failed: {e}")
+
+        for lt, dest_name in pairs:
+            try:
+                dest = layer_from_canonical_name(dest_name)
+                remove_trim_polygons(board, dest)
+                if lt.polygons:
+                    _create_items_checked(
+                        board,
+                        [_trim_shape(tp, dest, lock) for tp in lt.polygons],
+                        "trim polygon")
+                print(f"trim: {lt.layer} -> {dest_name} "
+                      f"({len(lt.polygons)} polygon(s), "
+                      f"{lt.marked_mm2:.1f} mm2)")
+            except Exception as e:
+                print(f"trim: {lt.layer} -> {dest_name} failed: {e}")
+        if commit is not None:
+            board.push_commit(commit, "Fill Resistance low-current copper")
         done = True
     finally:
         if commit is not None and not done:

@@ -40,6 +40,8 @@ class Selection:
     cap_max_drill_mm: float = 0.5
     adaptive: bool = True
     push_overlays: bool = False   # EXPERIMENTAL in-KiCad |J| overlays
+    trim_enabled: bool = False    # EXPERIMENTAL low-current copper marking
+    trim_pct: float = 10.0        # threshold as % of the mean |J|
 
 
 class _Dialog(QDialog):
@@ -129,6 +131,19 @@ class _Dialog(QDialog):
             f"layers must be enabled in Board Setup)")
         self.overlay_check.setChecked(config.PUSH_OVERLAYS)
         form.addRow("Overlays:", self.overlay_check)
+
+        tfirst, tlast = config.TRIM_LAYERS[0], config.TRIM_LAYERS[-1]
+        self.trim_check = QCheckBox(
+            f"experimental: mark copper below the threshold as polygons "
+            f"on {tfirst}..{tlast} (replaces polygons there; a suggestion "
+            f"only - removing copper shifts current elsewhere)")
+        self.trim_check.setChecked(config.TRIM_ENABLED)
+        form.addRow("Low-current copper:", self.trim_check)
+
+        self.trim_edit = QLineEdit(f"{config.TRIM_THRESHOLD_PCT:g}")
+        self.trim_edit.setEnabled(config.TRIM_ENABLED)
+        self.trim_check.toggled.connect(self.trim_edit.setEnabled)
+        form.addRow("Threshold [% of mean |J|]:", self.trim_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._try_accept)
@@ -227,6 +242,12 @@ class _Dialog(QDialog):
             extra_cu = number(self.extracu_edit, "Extra Cu")
             if extra_cu < 0:
                 raise ValueError("Extra Cu must be ≥ 0 µm.")
+        trim_pct = config.TRIM_THRESHOLD_PCT
+        if self.trim_check.isChecked():
+            trim_pct = number(self.trim_edit, "Trim threshold")
+            if not 0 < trim_pct < 100:
+                raise ValueError("Trim threshold must be between 0 and "
+                                 "100 (% of the mean |J|).")
         cap_max_drill = config.CAP_MAX_DRILL_MM
         if self.capped_check.isChecked():
             cap_max_drill = number(self.cap_drill_edit, "Capped up to drill")
@@ -251,7 +272,9 @@ class _Dialog(QDialog):
                          vias_capped=self.capped_check.isChecked(),
                          cap_max_drill_mm=cap_max_drill,
                          adaptive=self.adaptive_check.isChecked(),
-                         push_overlays=self.overlay_check.isChecked())
+                         push_overlays=self.overlay_check.isChecked(),
+                         trim_enabled=self.trim_check.isChecked(),
+                         trim_pct=trim_pct)
 
     def _try_accept(self) -> None:
         try:

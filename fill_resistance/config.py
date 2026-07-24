@@ -95,6 +95,25 @@ OVERLAY_ALPHA = 255             # overlay opacity over copper (0-255);
                                 # translucency washes out over bright
                                 # copper - toggle the User layer instead
 
+# --- Low-current copper marking (EXPERIMENTAL) ---
+TRIM_ENABLED = False            # dialog default: mark the copper below
+                                # TRIM_THRESHOLD_PCT as polygons on
+                                # TRIM_LAYERS. A suggestion, not a safe
+                                # cut list: copper carries little current
+                                # BECAUSE the rest carries it - removal
+                                # redistributes |J|, re-run after changes
+TRIM_THRESHOLD_PCT = 10.0       # threshold as % of the mean |J| over all
+                                # solved copper cells (mean, not max:
+                                # contact-corner spikes would dwarf a
+                                # max-relative threshold); dialog-settable
+TRIM_LAYERS = ("User.5", "User.6", "User.7", "User.8")
+                                # copper layers map here in stackup order
+                                # (top first); existing polygons on these
+                                # layers are REPLACED on every push; each
+                                # must be enabled in Board Setup
+TRIM_MIN_AREA_MM2 = 0.5         # marked specks smaller than this are
+                                # dropped (nothing useful to reclaim)
+
 # --- Adaptive grid ---
 ADAPTIVE_CELLS = True           # solve on a 2:1-balanced quadtree: fine at
                                 # copper boundaries/electrodes/features,

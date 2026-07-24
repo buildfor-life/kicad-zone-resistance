@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import config, plots, progress, raster, report, solver
+from . import config, plots, progress, raster, report, solver, trim
 from .errors import UserFacingError
 from .geometry import Problem
 from .solver import Result
@@ -12,9 +12,15 @@ from .solver import Result
 
 def run(problem: Problem, outdir: Path | None, show: bool = True,
         i_test: float | None = None, freq_hz: float = 0.0,
-        contact_model: str | None = None, overlay=None) -> Result:
+        contact_model: str | None = None, overlay=None,
+        trim_pct: float | None = None, trim_push=None) -> Result:
     """overlay: optional callback(stack, result) run after the solve
-    (EXPERIMENTAL in-KiCad overlays); its failures are non-fatal."""
+    (EXPERIMENTAL in-KiCad overlays); its failures are non-fatal.
+    trim_pct: mark copper below this % of the mean |J| (None = off):
+    per-layer areas are printed, polygons saved to
+    <outdir>/low_current_copper.json and handed to trim_push, an
+    optional callback(trim_result) that pushes them into the board
+    (failures non-fatal)."""
     if i_test is None:
         i_test = config.TEST_CURRENT_A
     if i_test <= 0:
@@ -50,6 +56,17 @@ def run(problem: Problem, outdir: Path | None, show: bool = True,
             overlay(stack, result)
         except Exception as e:
             print(f"overlay push failed: {e}")
+
+    if trim_pct is not None:
+        tr = trim.compute(result, stack, trim_pct)
+        print(trim.summary_line(tr))
+        if outdir is not None:
+            trim.write_json(outdir, tr)
+        if trim_push is not None:
+            try:
+                trim_push(tr)
+            except Exception as e:
+                print(f"trim push failed: {e}")
 
     progress.stage("rendering figures ...")
     figs = [

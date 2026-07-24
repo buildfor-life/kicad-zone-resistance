@@ -177,6 +177,24 @@ spelled out per step and in *Platform notes* below.
    reference images on those layers**, so don't store unrelated images
    there. Also available headless:
    `python tools/kicad_heatmap_overlay.py --net X --amps 10`.
+6. **Experimental — low-current copper marking** (dialog checkbox,
+   default off): after the solve, the copper whose |J| is **below a
+   threshold** (dialog-settable, default 10 % of the mean |J| over all
+   solved copper) is outlined as **filled graphic polygons** on
+   `User.5`…`User.8` (`TRIM_LAYERS` in `fill_resistance/config.py`;
+   enable them in Board Setup), copper layers mapped in stackup order,
+   top first. Marked specks under `TRIM_MIN_AREA_MM2` (0.5 mm²) are
+   dropped. Each region is one selectable polygon — use KiCad's
+   **Edit → Convert** to turn one into a rule area or zone cutout by
+   hand. Per-layer areas are printed to the Messages panel and the
+   polygons also land in `low_current_copper.json` next to the PNGs.
+   Every push **replaces all graphic polygons on those layers** (one
+   undo step). **This is a suggestion, not a safe cut list**: copper
+   carries little current *because* the rest carries it — removing
+   copper redistributes the current and raises |J| everywhere else, so
+   re-run after any change. The pour may also serve thermal spreading,
+   EMI return paths, or plane capacitance, which this DC analysis does
+   not see.
 
 ## Model & limits
 
