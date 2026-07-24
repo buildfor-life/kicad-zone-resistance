@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config
+from . import __version__, config
 from .geometry import Problem, save_problem
 from .raster import RasterStack
 from .solver import Result
@@ -59,9 +59,10 @@ def write_summary(outdir: Path, problem: Problem, stack: RasterStack,
                   result: Result) -> Path:
     ny, nx = stack.shape2d
     info = result.solve_info
+    head = f"fill_resistance {__version__} summary"
     lines = [
-        "fill_resistance summary",
-        "=======================",
+        head,
+        "=" * len(head),
         f"board:             {problem.board_path}",
         f"net:               {problem.net_name}",
         f"test current:      {result.i_test:g} A",
